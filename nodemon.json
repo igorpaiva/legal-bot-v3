@@ -1,0 +1,11 @@
+{
+  "ignore": [
+    "data/**/*",
+    "client/**/*",
+    "sessions/**/*",
+    ".wwebjs_cache/**/*",
+    "node_modules/**/*"
+  ],
+  "ext": "js,json",
+  "delay": "1000"
+}
