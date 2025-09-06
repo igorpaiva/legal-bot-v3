@@ -7,6 +7,7 @@ import { HumanLikeDelay } from './HumanLikeDelay.js';
 import { LegalTriageService } from './LegalTriageService.js';
 import { BotPersistence } from './BotPersistence.js';
 import { ConversationFlowService } from './ConversationFlowService.js';
+import { AudioTranscriptionService } from './AudioTranscriptionService.js';
 
 export class BotManager {
   constructor(io) {
@@ -102,7 +103,8 @@ export class BotManager {
         isRestoring: true, // Flag to indicate this is a restoration
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana'), // Pass assistant name
         groqService: new GroqService(), // Add AI service
-        humanLikeDelay: new HumanLikeDelay() // Add human-like delay service
+        humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
+        audioTranscriptionService: new AudioTranscriptionService() // Add audio transcription service
       };
 
       this.bots.set(config.id, botData);
@@ -199,7 +201,8 @@ export class BotManager {
       cooldownWarnings: new Map(), // Track cooldown warning messages to prevent spam
       conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName), // Pass assistant name to conversation service
       groqService: new GroqService(), // Add AI service
-      humanLikeDelay: new HumanLikeDelay() // Add human-like delay service
+      humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
+      audioTranscriptionService: new AudioTranscriptionService() // Add audio transcription service
     };
 
     this.bots.set(botId, botData);
@@ -391,10 +394,49 @@ export class BotManager {
       const contact = await message.getContact();
       const contactName = contact.name || contact.pushname || contact.number;
       
-      console.log(`Bot ${botData.id} received message from ${contactName}: ${message.body}`);
+      console.log(`Bot ${botData.id} received message from ${contactName} - Type: ${message.type}`);
+
+      let messageText = '';
+      
+      // Handle different message types
+      if (message.type === 'ptt' || message.type === 'audio') {
+        // Handle audio/voice messages
+        console.log(`Bot ${botData.id} - Processing audio message from ${contactName}`);
+        
+        try {
+          // Download and transcribe audio
+          const media = await message.downloadMedia();
+          const transcription = await botData.audioTranscriptionService.transcribeAudio(media);
+          
+          if (transcription) {
+            messageText = transcription;
+            console.log(`Bot ${botData.id} - Audio transcribed: ${transcription.substring(0, 100)}...`);
+          } else {
+            messageText = 'Desculpe, não consegui entender o áudio. Pode tentar enviar uma mensagem de texto?';
+            console.log(`Bot ${botData.id} - Failed to transcribe audio`);
+          }
+        } catch (error) {
+          console.error(`Bot ${botData.id} - Error processing audio:`, error);
+          messageText = 'Desculpe, tive problemas para processar o áudio. Pode tentar enviar uma mensagem de texto?';
+        }
+      } else if (message.type === 'chat' && message.body) {
+        // Handle regular text messages
+        messageText = message.body;
+        console.log(`Bot ${botData.id} - Text message: ${messageText.substring(0, 100)}...`);
+      } else {
+        // Handle unsupported message types
+        console.log(`Bot ${botData.id} - Unsupported message type: ${message.type}`);
+        messageText = 'Desculpe, posso responder apenas a mensagens de texto e áudio. Como posso ajudá-lo hoje?';
+      }
 
       // Simulate reading the message first (longer messages take more time to read)
-      await botData.humanLikeDelay.simulateReading(message.body.length);
+      await botData.humanLikeDelay.simulateReading(messageText.length);
+
+      // Skip processing if no valid message text was extracted
+      if (!messageText || messageText.trim().length === 0) {
+        console.log(`Bot ${botData.id} - No valid message text to process, skipping`);
+        return;
+      }
 
       // Add human-like typing delay using the bot's delay service
       await botData.humanLikeDelay.simulateTyping(chat);
@@ -405,7 +447,7 @@ export class BotManager {
       // It will handle the complete conversation flow like the original Java system
       response = await botData.conversationFlowService.processIncomingMessage(
         contact.number,
-        message.body,
+        messageText,
         contactName
       );
 
@@ -428,7 +470,7 @@ export class BotManager {
         });
       }
       
-      console.log(`Bot ${botData.id} sent response: ${response.substring(0, 100)}...`);
+      console.log(`Bot ${botData.id} sent response to ${contactName}: ${response.substring(0, 100)}...`);
       
     } catch (error) {
       console.error(`Error generating/sending response for bot ${botData.id}:`, error);

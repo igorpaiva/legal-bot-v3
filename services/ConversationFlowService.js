@@ -127,8 +127,6 @@ export class ConversationFlowService {
         return await this.handleDocumentCollection(conversation, messageText, client);
       case 'AWAITING_LAWYER':
         return await this.handleAwaitingLawyer(conversation, messageText, client);
-      case 'COMPLETED':
-        return await this.handleCompletedConversation(conversation, messageText, client);
       default:
         return await this.handleGreeting(conversation, messageText, client);
     }
@@ -147,7 +145,7 @@ TAREFA: Cumprimente de forma natural e peça o nome da pessoa.
 INSTRUÇÕES:
 - Seja calorosa e profissional
 - Use linguagem brasileira natural
-- Seja breve e objetiva (máximo 2 frases)
+- Seja concisa mas completa
 - Não use emojis
 - Se apresente como ${this.assistantName}
 - SEMPRE responda em português brasileiro
@@ -194,7 +192,7 @@ INSTRUÇÕES:
 - Explique que precisa do nome para personalizar o atendimento
 - Redirecione gentilmente de volta ao pedido do nome
 - Seja empática mas objetiva
-- Máximo 2 frases
+- Seja concisa mas completa
 
 EXEMPLO: Se perguntarem "por que precisa do nome?", responda "Para personalizar melhor seu atendimento. Como posso chamar você?"
 
@@ -221,7 +219,7 @@ INSTRUÇÕES:
 - Confirme o email rapidamente
 - Convide a pessoa a contar sobre a situação jurídica
 - Seja objetiva e empática
-- Máximo 2 frases
+- Seja concisa mas clara
 - Não use emojis
 - Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
 
@@ -399,7 +397,7 @@ INSTRUÇÕES:
 - Se há perguntas (sobre custos, tempo, processo), responda genericamente e redirecione
 - Use apenas "entendi" - não repita o que a pessoa disse
 - Peça detalhes específicos de forma objetiva
-- Máximo 2 frases
+- Seja concisa mas completa
 - Seja gentil mas direta
 
 EXEMPLO: Se perguntarem "quanto custa?", responda "O advogado vai explicar sobre valores. Pode me dar mais detalhes sobre sua situação?"
@@ -478,57 +476,6 @@ INSTRUÇÕES:
 Responda APENAS com sua mensagem:`;
 
     return await this.groqService.generateResponse(waitingPrompt);
-  }
-
-  async handleCompletedConversation(conversation, messageText, client) {
-    const firstName = client.name ? client.name.split(' ')[0] : 'cliente';
-    
-    // Initialize counter for post-completion messages if not exists
-    if (!conversation.postCompletionMessages) {
-      conversation.postCompletionMessages = 0;
-    }
-    
-    conversation.postCompletionMessages++;
-    
-    // Check if it's a thank you message
-    const thankYouPatterns = [
-      /obrigad[ao]/i,
-      /thanks/i,
-      /agradec/i,
-      /valeu/i,
-      /muito grat[ao]/i,
-      /brigad[ao]/i
-    ];
-    
-    const isThankYou = thankYouPatterns.some(pattern => pattern.test(messageText));
-    
-    if (isThankYou) {
-      // Respond to gratitude appropriately
-      const thankYouPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} agradeceu após finalizar o atendimento.
-
-MENSAGEM DO CLIENTE: "${messageText}"
-
-TAREFA: Responder ao agradecimento de forma calorosa e profissional.
-
-INSTRUÇÕES:
-- Agradeça de volta
-- Reforce que foi um prazer ajudar
-- Confirme que o advogado entrará em contato
-- Seja calorosa mas concisa
-- Use o nome ${firstName}
-
-Responda APENAS com sua mensagem:`;
-
-      return await this.groqService.generateResponse(thankYouPrompt);
-    }
-    
-    // If too many messages after completion, be more firm
-    if (conversation.postCompletionMessages >= 2) {
-      return `${firstName}, este número é exclusivo para triagens jurídicas. Seu caso já foi registrado e um advogado entrará em contato em breve. Para nova consulta, utilize nossos canais oficiais. Obrigada pela compreensão!`;
-    }
-    
-    // First post-completion message that's not a thank you
-    return `${firstName}, este número é apenas para triagens. Você tem outro caso para relatar? Se não, precisarei encerrar o contato. O advogado entrará em contato em breve! Obrigada pela compreensão.`;
   }
 
   getRandomGreeting() {

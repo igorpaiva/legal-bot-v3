@@ -58,7 +58,7 @@ IMPORTANTE: Seja objetivo, profissional e humano, mas sem repetições desnecess
         ],
         model: 'openai/gpt-oss-120b', // Fast and efficient model
         temperature: 0.7,
-        max_tokens: 800, // Increased to prevent message truncation for longer responses
+        max_tokens: 1200, // Increased to handle longer audio transcriptions and detailed responses
         top_p: 0.9,
         stream: false
       });
