@@ -2,14 +2,16 @@ import fs from 'fs/promises';
 import path from 'path';
 
 export class ConversationFlowService {
-  constructor(groqService, triageService) {
+  constructor(groqService, triageService, assistantName = 'Ana') {
     this.groqService = groqService;
     this.triageService = triageService;
+    this.assistantName = assistantName; // Store the assistant name
     this.conversations = new Map();
     this.clients = new Map();
     this.messages = new Map();
     this.conversationIdCounter = 1;
     this.messageIdCounter = 1;
+    this.pendingRetries = new Map(); // Track pending retries
     
     // Load persisted data
     this.loadConversations();
@@ -38,7 +40,35 @@ export class ConversationFlowService {
 
     } catch (error) {
       console.error('Error processing message:', error);
-      return 'Desculpe, tive um problema técnico. Pode repetir sua mensagem?';
+      
+      // Mark this message for retry
+      const retryKey = `${phone}_${Date.now()}`;
+      if (!this.pendingRetries) {
+        this.pendingRetries = new Map();
+      }
+      
+      this.pendingRetries.set(retryKey, {
+        phone,
+        messageText,
+        originalPhoneForReply,
+        attempts: 1,
+        maxAttempts: 3
+      });
+      
+      // Schedule retry in 30 seconds
+      setTimeout(() => {
+        this.retryMessage(retryKey);
+      }, 30000);
+      
+      // Return natural "busy" message
+      const busyMessages = [
+        'Oi! Estou com muitas mensagens agora, mas já volto para te atender. Aguarde só um minutinho! 😊',
+        'Olá! Estou meio ocupada no momento, mas já já retorno para continuar nossa conversa!',
+        'Oi! Só um momentinho, estou finalizando outro atendimento e já volto para você!',
+        'Olá! Estou um pouco sobrecarregada agora, mas em instantes volto para te ajudar!'
+      ];
+      
+      return busyMessages[Math.floor(Math.random() * busyMessages.length)];
     }
   }
 
@@ -71,7 +101,8 @@ export class ConversationFlowService {
       client: client,
       state: 'GREETING',
       startedAt: new Date(),
-      lastActivityAt: new Date()
+      lastActivityAt: new Date(),
+      conversationHistory: [] // Initialize the conversation history array
     };
     
     this.conversations.set(conversation.id, conversation);
@@ -83,7 +114,7 @@ export class ConversationFlowService {
     
     switch (state) {
       case 'GREETING':
-        return this.handleGreeting(conversation, messageText, client);
+        return await this.handleGreeting(conversation, messageText, client);
       case 'COLLECTING_NAME':
         return this.handleNameCollection(conversation, messageText, client);
       case 'COLLECTING_EMAIL':
@@ -91,24 +122,42 @@ export class ConversationFlowService {
       case 'ANALYZING_CASE':
         return await this.handleCaseAnalysis(conversation, messageText, client);
       case 'COLLECTING_DETAILS':
-        return this.handleDetailCollection(conversation, messageText, client);
+        return await this.handleDetailCollection(conversation, messageText, client);
       case 'COLLECTING_DOCUMENTS':
         return await this.handleDocumentCollection(conversation, messageText, client);
       case 'AWAITING_LAWYER':
-        return this.handleAwaitingLawyer(conversation, messageText, client);
+        return await this.handleAwaitingLawyer(conversation, messageText, client);
+      case 'COMPLETED':
+        return await this.handleCompletedConversation(conversation, messageText, client);
       default:
-        return this.handleGreeting(conversation, messageText, client);
+        return await this.handleGreeting(conversation, messageText, client);
     }
   }
 
-  handleGreeting(conversation, messageText, client) {
+  async handleGreeting(conversation, messageText, client) {
     conversation.state = 'COLLECTING_NAME';
     
-    const greeting = this.getRandomGreeting();
-    return `${greeting} Meu nome é Ana e trabalho aqui no escritório BriseWare. Vou ajudá-lo com sua questão jurídica. Qual é o seu nome completo?`;
+    // Let AI generate a completely natural greeting
+    const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare. 
+    
+Um cliente acabou de entrar em contato via WhatsApp pela primeira vez.
+
+TAREFA: Cumprimente de forma natural e peça o nome da pessoa.
+
+INSTRUÇÕES:
+- Seja calorosa e profissional
+- Use linguagem brasileira natural
+- Seja breve e objetiva (máximo 2 frases)
+- Não use emojis
+- Se apresente como ${this.assistantName}
+- SEMPRE responda em português brasileiro
+
+Responda APENAS com sua mensagem em português:`;
+
+    return await this.groqService.generateResponse(greetingPrompt);
   }
 
-  handleNameCollection(conversation, messageText, client) {
+  async handleNameCollection(conversation, messageText, client) {
     const name = this.extractName(messageText);
     if (name && name.length > 3) {
       client.name = name;
@@ -117,17 +166,45 @@ export class ConversationFlowService {
       conversation.state = 'COLLECTING_EMAIL';
       
       const firstName = name.split(' ')[0];
-      const responses = [
-        `Muito prazer, ${firstName}! Para manter você informado, poderia me passar seu e-mail?`,
-        `Que bom te conhecer, ${firstName}! Preciso do seu e-mail para enviar atualizações. Pode me passar?`
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
+      
+      // Let AI generate natural response asking for email
+      const emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}".
+
+SITUAÇÃO: Agora você precisa do email da pessoa para enviar atualizações sobre o caso.
+
+INSTRUÇÕES:
+- Reconheça o nome de forma calorosa (use "${firstName}")
+- Peça o email de forma natural
+- Explique brevemente por que precisa (para atualizações)
+- Seja conversacional, não robotizada
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(emailPrompt);
     } else {
-      return 'Desculpe, não consegui entender seu nome. Poderia repetir por favor?';
+      // AI generates natural request for name in context
+      const nameRequestPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente respondeu "${messageText}" quando você pediu o nome.
+
+SITUAÇÃO: A resposta pode conter uma pergunta ou não ter um nome claro.
+
+TAREFA: Se houver pergunta, responda brevemente e redirecione. Se não houver nome, peça novamente.
+
+INSTRUÇÕES:
+- Se há uma pergunta, responda de forma útil mas breve
+- Explique que precisa do nome para personalizar o atendimento
+- Redirecione gentilmente de volta ao pedido do nome
+- Seja empática mas objetiva
+- Máximo 2 frases
+
+EXEMPLO: Se perguntarem "por que precisa do nome?", responda "Para personalizar melhor seu atendimento. Como posso chamar você?"
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(nameRequestPrompt);
     }
   }
 
-  handleEmailCollection(conversation, messageText, client) {
+  async handleEmailCollection(conversation, messageText, client) {
     const email = this.extractEmail(messageText);
     if (email) {
       client.email = email;
@@ -135,85 +212,201 @@ export class ConversationFlowService {
       
       conversation.state = 'ANALYZING_CASE';
       
-      const responses = [
-        'Perfeito! Agora me conta: qual situação você está enfrentando? Pode dar todos os detalhes - datas, valores, pessoas envolvidas...',
-        'Ótimo! Vamos ao que interessa. Me explica o que está acontecendo? Quanto mais detalhes, melhor vou conseguir ajudar.'
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
+      // AI generates natural transition to case discussion
+      const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) acabou de fornecer o email "${email}".
+
+TAREFA: Fazer a transição natural para ouvir sobre o caso.
+
+INSTRUÇÕES:
+- Confirme o email rapidamente
+- Convide a pessoa a contar sobre a situação jurídica
+- Seja objetiva e empática
+- Máximo 2 frases
+- Não use emojis
+- Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(transitionPrompt);
     } else {
-      return 'Não consegui identificar um e-mail válido. Pode digitar novamente?';
+      // AI generates natural request for valid email
+      const emailClarificationPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente respondeu "${messageText}" quando você pediu o email.
+
+SITUAÇÃO: A resposta pode conter uma pergunta ou não ser um email válido.
+
+TAREFA: Se houver pergunta, responda brevemente e redirecione. Se não houver email válido, peça novamente.
+
+INSTRUÇÕES:
+- Se há uma pergunta (como "pode ser qualquer um?"), responda de forma útil mas breve
+- Explique que precisa de um email válido para atualizações do caso
+- Redirecione gentilmente de volta ao pedido de email
+- Seja objetiva mas empática
+- Máximo 2 frases
+
+EXEMPLO: Se perguntarem "pode ser qualquer um?", responda "Sim, pode ser seu email pessoal ou profissional. Qual email você gostaria de usar?"
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(emailClarificationPrompt);
     }
   }
 
   async handleCaseAnalysis(conversation, messageText, client) {
-    console.log('Analyzing case with Groq LLM...');
+    // Ensure conversationHistory array exists
+    if (!conversation.conversationHistory) {
+      conversation.conversationHistory = [];
+    }
     
-    try {
-      // Get full conversation context
-      const allMessages = this.getAllConversationText(conversation);
-      const fullContext = `${allMessages}\n\nÚltima mensagem: ${messageText}`;
-      
-      // Perform comprehensive triage analysis
-      const triageResult = await this.triageService.triageFromText(fullContext, client.phone, this.groqService);
-      console.log('Triage result:', JSON.stringify(triageResult, null, 2));
-      
-      if (triageResult) {
-        // Save triage analysis
-        this.saveTriageAnalysis(conversation, triageResult);
-        
-        // Check if we need more information - improved analysis
-        const confidence = triageResult.triage?.confidence || 0;
-        const description = triageResult.case?.description || '';
-        const hasDocuments = triageResult.case?.documents?.length > 0;
-        const hasSpecificDetails = this.hasSpecificDetails(fullContext);
-        
-        // More intelligent assessment of information completeness
-        const needsMoreInfo = (
-          confidence < 0.75 || 
-          description.length < 150 || 
-          (!hasSpecificDetails && !hasDocuments && fullContext.length < 300)
-        );
-        
-        if (needsMoreInfo) {
-          conversation.state = 'COLLECTING_DETAILS';
-          
-          // Provide specific guidance on what's missing
-          let detailRequest = 'Entendi sua situação. Para elaborar uma análise mais completa, preciso de alguns detalhes adicionais.';
-          
-          if (!hasSpecificDetails) {
-            detailRequest += ' Pode me contar mais sobre:\n\n• Datas específicas dos acontecimentos\n• Valores envolvidos\n• Nomes das pessoas/empresas envolvidas\n• O que exatamente aconteceu';
-          } else {
-            detailRequest += ' Pode me fornecer mais informações sobre os documentos que você possui ou detalhes adicionais relevantes?';
-          }
-          
-          return detailRequest;
-        } else {
-          // Generate simple completion response without triage details
-          const category = triageResult.case?.category || 'Jurídico';
-          const urgency = triageResult.case?.urgency || 'media';
-          
-          conversation.state = 'COMPLETED';
-          
-          return `Ok, obrigada por informar todos os detalhes. O advogado responsável deve ser especialista em *${category}*. Ele deve entrar em contato com você nas próximas horas.`;
-        }
-      } else {
-        conversation.state = 'COLLECTING_DETAILS';
-        return 'Entendi. Para te ajudar melhor, pode me dar mais detalhes sobre sua situação?';
+    // Acumula informações sobre o caso
+    conversation.conversationHistory.push({
+      role: 'user',
+      content: messageText,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Check if we have too many exchanges - auto-finalize to prevent loops
+    const userMessages = conversation.conversationHistory.filter(msg => msg.role === 'user');
+    if (userMessages.length >= 6) {
+      console.log('Auto-finalizing conversation due to too many exchanges');
+      conversation.state = 'COMPLETED';
+      // Save the triage analysis if available
+      if (conversation.analysis) {
+        this.saveTriageAnalysis(conversation, conversation.analysis);
       }
+      return `Entendi. Com base em todas as informações que você forneceu, nossa equipe jurídica irá analisar seu caso detalhadamente. Um advogado especializado entrará em contato em até 24 horas para discutir os próximos passos e esclarecer suas dúvidas.`;
+    }
+    
+    // Se ainda não fez análise inicial ou precisa de mais informações
+    if (!conversation.needsMoreInfo) {
+      const analysis = await this.triageService.triageFromText(messageText, client.phone, this.groqService);
+      conversation.analysis = analysis;
       
-    } catch (error) {
-      console.error('Error in case analysis:', error);
-      conversation.state = 'COLLECTING_DETAILS';
-      return 'Entendi sua situação. Pode me dar alguns detalhes adicionais para eu elaborar uma análise mais precisa?';
+      // AI decides if more information is needed
+      const analysisPrompt = `Você é ${this.assistantName}, assistente jurídica especializada. O cliente ${client.name} contou sobre a situação:
+
+"${messageText}"
+
+ANÁLISE TÉCNICA:
+- Área: ${analysis?.case?.category || 'Não identificada'}
+- Urgência: ${analysis?.case?.urgency || 'Média'}
+- Complexidade: ${analysis?.triage?.complexity || 'Média'}
+- Confiança: ${analysis?.triage?.confidence || 0.5}
+
+AVALIAÇÃO DE COMPLETUDE:
+Verifique se a mensagem contém:
+- ✓ Situação claramente descrita com contexto completo (datas, pessoas, eventos)
+- ✓ Problema jurídico específico identificado
+- ✓ Consequências ou danos mencionados
+- ✓ Cronologia dos fatos apresentada
+
+REGRA IMPORTANTE: Se a mensagem for LONGA (mais de 300 caracteres) e DETALHADA com cronologia clara, geralmente JÁ CONTÉM informações suficientes.
+
+TAREFA: Decidir se você precisa de mais informações ou se pode finalizar o atendimento.
+
+Se PRECISAR de mais informações (apenas se faltarem elementos essenciais):
+- Use apenas "entendi" ou "compreendo" para reconhecer a situação
+- Faça UMA pergunta específica sobre o que realmente falta
+- Seja objetiva (máximo 1 frase de pergunta)
+
+Se TIVER informações SUFICIENTES (caso detalhado com cronologia):
+- Comece sua resposta exatamente com "FINALIZAR:"
+- NÃO faça resumo da situação (o cliente já sabe o que aconteceu)
+- Vá direto aos próximos passos
+- Explique que um advogado especializado analisará o caso
+- Informe que o advogado entrará em contato em breve
+
+Responda APENAS com sua mensagem:`;
+
+      const response = await this.groqService.generateResponse(analysisPrompt);
+      
+      if (response.startsWith('FINALIZAR:')) {
+        conversation.state = 'COMPLETED';
+        // Save the triage analysis when conversation completes
+        if (conversation.analysis) {
+          this.saveTriageAnalysis(conversation, conversation.analysis);
+        }
+        return response.substring(10).trim();
+      } else {
+        conversation.needsMoreInfo = true;
+        return response;
+      }
+    } else {
+      // Já tinha análise, agora com informações adicionais
+      const conversationMessages = conversation.conversationHistory || [];
+      const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
+      
+      const followUpPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} deu mais informações:
+
+ÚLTIMA MENSAGEM: "${messageText}"
+
+TODAS AS MENSAGENS DO CLIENTE:
+"${allUserMessages}"
+
+CONTEXTO ANTERIOR:
+- Área: ${conversation.analysis?.case?.category || 'Não identificada'}
+
+ANÁLISE CRÍTICA:
+- Se o cliente disse "já expliquei tudo" ou similar, é sinal que você está sendo repetitiva
+- Se já há muitas informações detalhadas nas mensagens anteriores, provavelmente é suficiente
+- Se o cliente está frustrado, finalize o atendimento
+
+TAREFA: Com todas essas informações, decidir se pode finalizar ou precisa saber mais.
+
+REGRA IMPORTANTE: Se há muita informação já coletada E o cliente demonstra frustração, FINALIZE o atendimento.
+
+Se PRECISAR de mais informações (apenas se essencial):
+- Use apenas "entendi" - não repita a situação
+- Faça UMA pergunta específica sobre algo realmente crucial
+- Máximo 1 frase
+
+Se TIVER informações SUFICIENTES OU cliente demonstrar frustração:
+- Comece sua resposta exatamente com "FINALIZAR:"
+- NÃO faça resumo (o cliente já conhece sua situação)
+- Vá direto aos próximos passos  
+- Explique que um advogado especializado analisará o caso
+- Informe que o advogado entrará em contato em breve
+
+Responda APENAS com sua mensagem:`;
+
+      const response = await this.groqService.generateResponse(followUpPrompt);
+      
+      if (response.startsWith('FINALIZAR:')) {
+        conversation.state = 'COMPLETED';
+        // Save the triage analysis when conversation completes
+        if (conversation.analysis) {
+          this.saveTriageAnalysis(conversation, conversation.analysis);
+        }
+        return response.substring(10).trim();
+      } else {
+        return response;
+      }
     }
   }
 
-  handleDetailCollection(conversation, messageText, client) {
+  async handleDetailCollection(conversation, messageText, client) {
     if (messageText.length > 50) {
       conversation.state = 'ANALYZING_CASE';
       return this.handleCaseAnalysis(conversation, messageText, client);
     } else {
-      return 'Pode me dar um pouco mais de detalhes? Isso me ajuda a entender melhor seu caso.';
+      // AI generates natural request for more details
+      const detailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} deu uma resposta: "${messageText}"
+
+SITUAÇÃO: A resposta pode ser breve ou conter perguntas sobre o processo.
+
+TAREFA: Se houver perguntas, responda brevemente e redirecione. Se a resposta for muito breve, peça mais detalhes.
+
+INSTRUÇÕES:
+- Se há perguntas (sobre custos, tempo, processo), responda genericamente e redirecione
+- Use apenas "entendi" - não repita o que a pessoa disse
+- Peça detalhes específicos de forma objetiva
+- Máximo 2 frases
+- Seja gentil mas direta
+
+EXEMPLO: Se perguntarem "quanto custa?", responda "O advogado vai explicar sobre valores. Pode me dar mais detalhes sobre sua situação?"
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(detailPrompt);
     }
   }
 
@@ -231,16 +424,111 @@ export class ConversationFlowService {
       
       const category = finalTriage.case?.category || 'Jurídico';
       
-      // Simple message for client - no triage details
-      return `Ok, obrigada por informar todos os detalhes. O advogado responsável deve ser especialista em *${category}*. Ele deve entrar em contato com você nas próximas horas.`;
+      // AI generates natural completion message
+      const completionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} finalizou o processo de coleta de informações sobre um caso de ${category}.
+
+SITUAÇÃO: Todas as informações foram coletadas e analisadas.
+
+TAREFA: Dar uma mensagem final natural e profissional.
+
+INSTRUÇÕES:
+- Agradeça pela confiança
+- Confirme que as informações foram registradas
+- Explique que um advogado especialista em ${category} entrará em contato
+- Seja calorosa mas profissional
+- Use linguagem natural brasileira
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(completionPrompt);
     }
     
-    return 'Ok, obrigada por informar todos os detalhes. O advogado responsável deve entrar em contato com você nas próximas horas.';
+    // Fallback AI message
+    const fallbackPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} finalizou o atendimento.
+
+TAREFA: Dar uma mensagem final profissional.
+
+INSTRUÇÕES:
+- Agradeça pelas informações
+- Confirme que um advogado entrará em contato
+- Seja calorosa e profissional
+
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(fallbackPrompt);
   }
 
-  handleAwaitingLawyer(conversation, messageText, client) {
+  async handleAwaitingLawyer(conversation, messageText, client) {
     const firstName = client.name ? client.name.split(' ')[0] : '';
-    return `Oi ${firstName}! Sua conversa foi direcionada para um advogado especializado. Todas as informações foram registradas. Um profissional entrará em contato em breve!`;
+    
+    // AI generates natural response for clients who message while waiting
+    const waitingPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} já foi atendido e está aguardando contato de um advogado, mas enviou uma nova mensagem: "${messageText}"
+
+SITUAÇÃO: Cliente já tem caso em andamento e está aguardando contato do advogado.
+
+TAREFA: Responder de forma natural e tranquilizadora.
+
+INSTRUÇÕES:
+- Confirme que o caso está sendo acompanhado
+- Tranquilize sobre o contato do advogado
+- Seja empática
+- Use o nome ${firstName}
+- Use linguagem natural brasileira
+
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(waitingPrompt);
+  }
+
+  async handleCompletedConversation(conversation, messageText, client) {
+    const firstName = client.name ? client.name.split(' ')[0] : 'cliente';
+    
+    // Initialize counter for post-completion messages if not exists
+    if (!conversation.postCompletionMessages) {
+      conversation.postCompletionMessages = 0;
+    }
+    
+    conversation.postCompletionMessages++;
+    
+    // Check if it's a thank you message
+    const thankYouPatterns = [
+      /obrigad[ao]/i,
+      /thanks/i,
+      /agradec/i,
+      /valeu/i,
+      /muito grat[ao]/i,
+      /brigad[ao]/i
+    ];
+    
+    const isThankYou = thankYouPatterns.some(pattern => pattern.test(messageText));
+    
+    if (isThankYou) {
+      // Respond to gratitude appropriately
+      const thankYouPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} agradeceu após finalizar o atendimento.
+
+MENSAGEM DO CLIENTE: "${messageText}"
+
+TAREFA: Responder ao agradecimento de forma calorosa e profissional.
+
+INSTRUÇÕES:
+- Agradeça de volta
+- Reforce que foi um prazer ajudar
+- Confirme que o advogado entrará em contato
+- Seja calorosa mas concisa
+- Use o nome ${firstName}
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(thankYouPrompt);
+    }
+    
+    // If too many messages after completion, be more firm
+    if (conversation.postCompletionMessages >= 2) {
+      return `${firstName}, este número é exclusivo para triagens jurídicas. Seu caso já foi registrado e um advogado entrará em contato em breve. Para nova consulta, utilize nossos canais oficiais. Obrigada pela compreensão!`;
+    }
+    
+    // First post-completion message that's not a thank you
+    return `${firstName}, este número é apenas para triagens. Você tem outro caso para relatar? Se não, precisarei encerrar o contato. O advogado entrará em contato em breve! Obrigada pela compreensão.`;
   }
 
   getRandomGreeting() {
@@ -272,15 +560,64 @@ export class ConversationFlowService {
   }
 
   extractName(text) {
+    // Check if it's clearly a question first
+    if (text.includes('?') || 
+        text.toLowerCase().includes('precisa') || 
+        text.toLowerCase().includes('por que') ||
+        text.toLowerCase().includes('porque') ||
+        text.toLowerCase().includes('pra que') ||
+        text.toLowerCase().includes('tem que') ||
+        text.toLowerCase().includes('obrigatório')) {
+      return null; // It's a question, not a name
+    }
+    
+    // Check for common greeting patterns that aren't names
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes('olá') || 
+        lowerText.includes('oi') || 
+        lowerText.includes('bom dia') ||
+        lowerText.includes('boa tarde') ||
+        lowerText.includes('boa noite') ||
+        lowerText.includes('tudo bem')) {
+      return null;
+    }
+    
     const words = text.trim().split(/\s+/);
+    
+    // If only one word and it's too short or common, probably not a name
+    if (words.length === 1) {
+      const word = words[0].toLowerCase();
+      if (word.length < 3 || 
+          ['sim', 'não', 'ok', 'certo', 'claro', 'pode', 'sei'].includes(word)) {
+        return null;
+      }
+    }
+    
     if (words.length >= 2) {
       // Remove common words that aren't names
       const filtered = words.filter(word => 
-        !['meu', 'nome', 'é', 'sou', 'eu', 'me', 'chamo'].includes(word.toLowerCase())
+        !['meu', 'nome', 'é', 'sou', 'eu', 'me', 'chamo', 'aqui', 'olá', 'oi'].includes(word.toLowerCase())
       );
-      return filtered.join(' ');
+      
+      // If after filtering we have at least one capitalized word, it might be a name
+      const hasCapitalizedWord = filtered.some(word => 
+        word.charAt(0) === word.charAt(0).toUpperCase() && word.length > 2
+      );
+      
+      if (hasCapitalizedWord && filtered.length > 0) {
+        return filtered.join(' ');
+      }
     }
-    return text.trim();
+    
+    // For single words, check if it looks like a name (capitalized, reasonable length)
+    if (words.length === 1) {
+      const word = words[0];
+      if (word.charAt(0) === word.charAt(0).toUpperCase() && word.length >= 3) {
+        return word;
+      }
+    }
+    
+    return null; // Couldn't identify a valid name
   }
 
   extractEmail(text) {
@@ -419,6 +756,13 @@ export class ConversationFlowService {
       this.clients = new Map(Object.entries(parsed.clients || {}));
       this.messages = new Map(Object.entries(parsed.messages || {}));
       
+      // Ensure all loaded conversations have conversationHistory array
+      for (const [id, conversation] of this.conversations.entries()) {
+        if (!conversation.conversationHistory) {
+          conversation.conversationHistory = [];
+        }
+      }
+      
       if (parsed.counters) {
         this.conversationIdCounter = parsed.counters.conversationId || 1;
         this.messageIdCounter = parsed.counters.messageId || 1;
@@ -439,15 +783,18 @@ export class ConversationFlowService {
       const messages = this.messages.get(conv.id) || [];
       const analysisMessage = messages.find(msg => msg.direction === 'ANALYSIS');
       
+      // Use analysis message if available, otherwise use conversation.analysis
+      const triageAnalysis = analysisMessage ? analysisMessage.rawPayload : conv.analysis;
+      
       return {
         id: conv.id,
         client: conv.client,
         state: conv.state,
         startedAt: conv.startedAt,
         lastActivityAt: conv.lastActivityAt,
-        triageAnalysis: analysisMessage ? analysisMessage.rawPayload : null,
+        triageAnalysis: triageAnalysis,
         timestamp: conv.startedAt,
-        urgency: analysisMessage?.rawPayload?.case?.urgency || 'baixa'
+        urgency: triageAnalysis?.case?.urgency || 'baixa'
       };
     });
   }
@@ -473,5 +820,64 @@ export class ConversationFlowService {
       }
     }
     return triages;
+  }
+
+  async retryMessage(retryKey) {
+    const retryData = this.pendingRetries.get(retryKey);
+    
+    if (!retryData) {
+      console.log(`Retry key ${retryKey} not found`);
+      return;
+    }
+    
+    console.log(`Attempting retry ${retryData.attempts}/${retryData.maxAttempts} for ${retryData.phone}`);
+    
+    try {
+      // Try to process the message again
+      const response = await this.processIncomingMessage(
+        retryData.phone, 
+        retryData.messageText, 
+        retryData.originalPhoneForReply
+      );
+      
+      // If successful, remove from retry queue and notify via callback
+      this.pendingRetries.delete(retryKey);
+      
+      // Notify the BotManager about the successful retry
+      if (this.onRetrySuccess) {
+        this.onRetrySuccess(retryData.phone, response);
+      }
+      
+      console.log(`Retry successful for ${retryData.phone}`);
+      
+    } catch (error) {
+      console.error(`Retry attempt ${retryData.attempts} failed:`, error);
+      
+      retryData.attempts++;
+      
+      if (retryData.attempts <= retryData.maxAttempts) {
+        // Schedule another retry in 30 seconds
+        setTimeout(() => {
+          this.retryMessage(retryKey);
+        }, 30000);
+        
+        console.log(`Scheduling retry ${retryData.attempts}/${retryData.maxAttempts} in 30s`);
+      } else {
+        // Max attempts reached, give up and send final message
+        this.pendingRetries.delete(retryKey);
+        
+        if (this.onRetryFailed) {
+          this.onRetryFailed(retryData.phone, 'Desculpe, não consegui processar sua mensagem. Tente novamente mais tarde.');
+        }
+        
+        console.log(`Max retry attempts reached for ${retryData.phone}`);
+      }
+    }
+  }
+
+  // Set callback functions for retry events
+  setRetryCallbacks(onSuccess, onFailed) {
+    this.onRetrySuccess = onSuccess;
+    this.onRetryFailed = onFailed;
   }
 }

@@ -114,6 +114,11 @@ const BotCard: React.FC<{
           </Avatar>
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6">{bot.name}</Typography>
+            {bot.assistantName && (
+              <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+                Assistant: {bot.assistantName}
+              </Typography>
+            )}
             <Chip 
               label={bot.status.replace(/_/g, ' ')} 
               color={getStatusColor(bot.status)} 
@@ -193,6 +198,7 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
   const [newBotName, setNewBotName] = useState('');
+  const [newAssistantName, setNewAssistantName] = useState('Ana'); // Default to Ana
   const [loading, setLoading] = useState(false);
 
   const handleCreateBot = async () => {
@@ -200,11 +206,15 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
 
     setLoading(true);
     try {
-      const response = await api.post('/bot', { name: newBotName });
+      const response = await api.post('/bot', { 
+        name: newBotName,
+        assistantName: newAssistantName.trim() || 'Ana' 
+      });
       if (response.data.success) {
         onNotification('Bot created successfully!', 'success');
         setCreateDialogOpen(false);
         setNewBotName('');
+        setNewAssistantName('Ana'); // Reset to default
         
         // The bot will be added via socket.io events
       } else {
@@ -303,14 +313,29 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
             value={newBotName}
             onChange={(e) => setNewBotName(e.target.value)}
             placeholder="Enter a name for your bot"
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            margin="dense"
+            label="Assistant Name"
+            fullWidth
+            variant="outlined"
+            value={newAssistantName}
+            onChange={(e) => setNewAssistantName(e.target.value)}
+            placeholder="Enter the assistant's name (e.g., Ana, Maria, João)"
+            helperText="This is the name your bot will use when talking to clients"
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={() => {
+            setCreateDialogOpen(false);
+            setNewBotName('');
+            setNewAssistantName('Ana');
+          }}>Cancel</Button>
           <Button 
             onClick={handleCreateBot} 
             variant="contained"
-            disabled={!newBotName.trim() || loading}
+            disabled={!newBotName.trim() || !newAssistantName.trim() || loading}
           >
             Create
           </Button>

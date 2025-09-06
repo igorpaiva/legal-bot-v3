@@ -9,94 +9,32 @@ export class GroqService {
       apiKey: process.env.GROQ_API_KEY
     });
     
-    this.systemPrompt = `Você é um assistente virtual de um escritório de advocacia brasileiro especializado em triagem jurídica. Suas características:
+    this.systemPrompt = `Você é um assistente virtual de um escritório de advocacia brasileiro especializado em triagem jurídica.
+
+IDIOMA: SEMPRE responda em português brasileiro. NUNCA use inglês.
 
 PERSONALIDADE:
-- Profissional, mas acessível e empático
-- Fala em português brasileiro natural
+- Profissional e empático
+- Fala em português brasileiro natural e conciso
 - Usa linguagem simples, sem juridiquês
-- Demonstra compreensão e acolhimento
+- Não use emojis
 
-FUNÇÃO PRINCIPAL:
+FUNÇÃO:
 - Realizar triagem inicial de casos jurídicos
 - Coletar informações básicas dos clientes
-- Classificar urgência e área do direito
-- Orientar sobre documentos necessários
-
-ÁREAS DE ATUAÇÃO:
-- Direito Trabalhista
-- Direito de Família  
-- Direito Civil
-- Direito Criminal
-- Direito do Consumidor
+- Orientar sobre próximos passos
 
 INSTRUÇÕES:
-1. Seja sempre empático com situações difíceis
-2. Explique procedimentos de forma simples
-3. Não dê conselhos jurídicos específicos
-4. Sempre reforce que um advogado dará orientação detalhada
-5. Use emojis moderadamente para ser mais humano
-6. Mantenha respostas concisas (máximo 3 frases)
-7. Se não souber algo, seja honesto e encaminhe para o advogado
+1. Seja empático com situações difíceis
+2. Responda de forma completa mas objetiva
+3. Não repita o que o cliente disse - apenas responda
+4. Não dê conselhos jurídicos específicos
+5. Use "entendi" ou "compreendo" em vez de repetir situações
+6. Vá direto ao ponto
+7. SEMPRE responda em português brasileiro
+8. Para casos complexos, faça quantas perguntas forem necessárias
 
-TOME CUIDADO:
-- Nunca prometa resultados de processos
-- Não critique outros advogados
-- Não comente sobre valores de honorários
-- Sempre oriente a procurar um advogado para casos urgentes
-
-LEMBRE-SE: Você está ajudando pessoas em momentos difíceis. Seja humano, compreensivo e profissional.`;
-  }
-
-  async generateResponse(userMessage, context = {}) {
-    try {
-      if (!this.groq || !process.env.GROQ_API_KEY) {
-        return 'Desculpe, estou com dificuldades técnicas no momento. Um advogado entrará em contato em breve. 📞';
-      }
-
-      const contextInfo = this.buildContextString(context);
-      
-      const completion = await this.groq.chat.completions.create({
-        messages: [
-          {
-            role: 'system',
-            content: this.systemPrompt + contextInfo
-          },
-          {
-            role: 'user',
-            content: userMessage
-          }
-        ],
-        model: 'openai/gpt-oss-120b', // Fast and efficient model
-        temperature: 0.7,
-        max_tokens: 200, // Slightly more for legal explanations
-        top_p: 0.9,
-        stream: false
-      });
-
-      const response = completion.choices[0]?.message?.content;
-      
-      if (!response) {
-        throw new Error('No response generated from Groq');
-      }
-
-      return response.trim();
-      
-    } catch (error) {
-      console.error('Groq API error:', error);
-      
-      // Return fallback responses in Portuguese based on error type
-      if (error.message.includes('API key')) {
-        return 'Olá! Estou com problemas técnicos temporários. Nossa equipe já foi notificada e um advogado entrará em contato em breve. 📱';
-      }
-      
-      if (error.message.includes('rate limit')) {
-        return 'Estou recebendo muitas mensagens agora. Aguarde um momento e tente novamente, por favor. ⏳';
-      }
-      
-      // Generic fallback in Portuguese
-      return 'Desculpe, não consegui processar sua mensagem. Pode reformular? Um advogado também pode te atender diretamente. 💼';
-    }
+IMPORTANTE: Seja objetivo, profissional e humano, mas sem repetições desnecessárias. NUNCA responda em inglês.`;
   }
 
   async generateResponse(userMessage, context = {}) {
@@ -120,14 +58,15 @@ LEMBRE-SE: Você está ajudando pessoas em momentos difíceis. Seja humano, comp
         ],
         model: 'openai/gpt-oss-120b', // Fast and efficient model
         temperature: 0.7,
-        max_tokens: 150, // Keep responses concise for WhatsApp
+        max_tokens: 800, // Increased to prevent message truncation for longer responses
         top_p: 0.9,
         stream: false
       });
 
       const response = completion.choices[0]?.message?.content;
       
-      if (!response) {
+      if (!response || response.trim() === '') {
+        console.warn('Empty response from Groq, using fallback');
         throw new Error('No response generated from Groq');
       }
 
@@ -138,15 +77,15 @@ LEMBRE-SE: Você está ajudando pessoas em momentos difíceis. Seja humano, comp
       
       // Return fallback responses based on error type
       if (error.message.includes('API key')) {
-        return 'Hi! I\'m currently having some technical difficulties. Please try again in a few minutes.';
+        return 'Olá! Estou com problemas técnicos temporários. Tente novamente em alguns minutos.';
       }
       
       if (error.message.includes('rate limit')) {
-        return 'I\'m getting a lot of messages right now. Could you please wait a moment and try again?';
+        return 'Estou recebendo muitas mensagens agora. Aguarde um momento e tente novamente, por favor.';
       }
       
       // Generic fallback
-      return 'Sorry, I didn\'t quite catch that. Could you please rephrase your message?';
+      return 'Desculpe, não consegui processar sua mensagem. Pode reformular?';
     }
   }
 
@@ -192,7 +131,7 @@ LEMBRE-SE: Você está ajudando pessoas em momentos difíceis. Seja humano, comp
             content: prompt
           }
         ],
-        model: 'openai/gpt-oss-120b',
+        model: 'openai/gpt-oss-120b', // Use the same model for consistency
         temperature: 0.3, // Mais determinístico para análise estruturada
         max_tokens: 8192, // Maior limite para análises completas
         top_p: 0.9,
@@ -201,7 +140,8 @@ LEMBRE-SE: Você está ajudando pessoas em momentos difíceis. Seja humano, comp
 
       const response = completion.choices[0]?.message?.content;
       
-      if (!response) {
+      if (!response || response.trim() === '') {
+        console.warn('Empty analysis response from Groq');
         throw new Error('No response generated from Groq');
       }
 

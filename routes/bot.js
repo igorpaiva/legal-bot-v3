@@ -25,6 +25,7 @@ router.get('/:id', (req, res) => {
       bot: {
         id: bot.id,
         name: bot.name,
+        assistantName: bot.assistantName, // Include assistant name
         status: bot.status,
         phoneNumber: bot.phoneNumber,
         isActive: bot.isActive,
@@ -43,8 +44,8 @@ router.get('/:id', (req, res) => {
 // Create new bot
 router.post('/', async (req, res) => {
   try {
-    const { name } = req.body;
-    const botId = await req.botManager.createBot(name);
+    const { name, assistantName } = req.body;
+    const botId = await req.botManager.createBot(name, assistantName);
     
     res.json({ 
       success: true, 

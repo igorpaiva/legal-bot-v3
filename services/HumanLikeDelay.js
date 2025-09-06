@@ -4,6 +4,12 @@ export class HumanLikeDelay {
     this.maxResponseDelay = parseInt(process.env.BOT_RESPONSE_DELAY_MAX) || 5000;
     this.minTypingDelay = parseInt(process.env.BOT_TYPING_DELAY_MIN) || 500;
     this.maxTypingDelay = parseInt(process.env.BOT_TYPING_DELAY_MAX) || 2000;
+    
+    // Reading delay configuration
+    this.readingSpeedWPM = parseInt(process.env.BOT_READING_SPEED_WPM) || 250;
+    this.complexityThreshold = parseInt(process.env.BOT_READING_COMPLEXITY_THRESHOLD) || 200;
+    this.minReadingDelay = parseInt(process.env.BOT_READING_MIN_DELAY) || 500;
+    this.maxReadingDelay = parseInt(process.env.BOT_READING_MAX_DELAY) || 45000;
   }
 
   /**
@@ -56,17 +62,31 @@ export class HumanLikeDelay {
    * Get a random delay for reading a message (based on message length)
    */
   getReadingDelay(messageLength) {
-    // Assume average reading speed of 200 words per minute
-    // Average word length is about 5 characters
-    const wordsEstimate = messageLength / 5;
-    const readingTimeMs = (wordsEstimate / 200) * 60 * 1000;
+    // Calculate reading time based on realistic human reading speed
+    // Average word length: ~4.5 characters (accounting for spaces and punctuation)
     
-    // Add some randomness (±50%)
-    const variance = readingTimeMs * 0.5;
+    const estimatedWords = messageLength / 4.5;
+    const baseReadingTimeMs = (estimatedWords / this.readingSpeedWPM) * 60 * 1000;
+    
+    // Add complexity factor for longer messages (people read slower when processing more info)
+    let complexityMultiplier = 1;
+    if (messageLength > this.complexityThreshold) complexityMultiplier = 1.2;
+    if (messageLength > this.complexityThreshold * 2.5) complexityMultiplier = 1.4;
+    if (messageLength > this.complexityThreshold * 5) complexityMultiplier = 1.6;
+    
+    const adjustedReadingTime = baseReadingTimeMs * complexityMultiplier;
+    
+    // Add natural variance (±40%)
+    const variance = adjustedReadingTime * 0.4;
     const randomVariance = (Math.random() - 0.5) * 2 * variance;
     
-    // Ensure minimum delay of 500ms and maximum of 10 seconds
-    const delay = Math.max(500, Math.min(10000, readingTimeMs + randomVariance));
+    const finalReadingTime = adjustedReadingTime + randomVariance;
+    
+    // Set reasonable bounds using configurable values
+    const minDelay = Math.max(this.minReadingDelay, messageLength * 2); // At least 2ms per character
+    const maxDelay = Math.min(this.maxReadingDelay, messageLength * 20); // At most 20ms per character
+    
+    const delay = Math.max(minDelay, Math.min(maxDelay, finalReadingTime));
     
     return Math.floor(delay);
   }
@@ -76,7 +96,9 @@ export class HumanLikeDelay {
    */
   async simulateReading(messageLength) {
     const readingDelay = this.getReadingDelay(messageLength);
-    console.log(`Simulating reading for ${readingDelay}ms (message length: ${messageLength} chars)`);
+    const estimatedWords = Math.round(messageLength / 4.5);
+    
+    console.log(`Simulating reading for ${readingDelay}ms (${messageLength} chars, ~${estimatedWords} words)`);
     await this.sleep(readingDelay);
   }
 

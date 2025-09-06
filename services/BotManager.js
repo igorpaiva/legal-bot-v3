@@ -85,6 +85,7 @@ export class BotManager {
       const botData = {
         id: config.id,
         name: config.name,
+        assistantName: config.assistantName || 'Ana', // Use saved assistant name or default
         client,
         status: 'restoring', // Set a specific status for restoration
         qrCode: null,
@@ -96,15 +97,17 @@ export class BotManager {
         processedMessages: new Set(),
         isProcessing: false,
         chatCooldowns: new Map(),
+        lastMessageTimes: new Map(), // Track user message timing for spam prevention
         error: null,
         isRestoring: true, // Flag to indicate this is a restoration
-        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService()), // Add conversation flow service with dependencies
+        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana'), // Pass assistant name
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay() // Add human-like delay service
       };
 
       this.bots.set(config.id, botData);
       this.setupBotEvents(botData);
+      this.setupRetryCallbacks(botData);
       
       // Emit initial state
       this.emitBotUpdate(config.id);
@@ -153,9 +156,10 @@ export class BotManager {
     }
   }
 
-  async createBot(name = null) {
+  async createBot(name = null, assistantName = null) {
     const botId = uuidv4();
     const botName = name || `Bot-${Date.now()}`;
+    const defaultAssistantName = assistantName || 'Ana';
     
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -179,6 +183,7 @@ export class BotManager {
     const botData = {
       id: botId,
       name: botName,
+      assistantName: defaultAssistantName, // Add assistant name field
       client,
       status: 'initializing',
       qrCode: null,
@@ -190,14 +195,16 @@ export class BotManager {
       processedMessages: new Set(), // Track processed message IDs to prevent duplicates
       isProcessing: false, // Flag to prevent concurrent message processing
       chatCooldowns: new Map(), // Track last response time per chat to prevent spam
+      lastMessageTimes: new Map(), // Track user message timing for spam prevention
       cooldownWarnings: new Map(), // Track cooldown warning messages to prevent spam
-      conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService()), // Add conversation flow service with dependencies
+      conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName), // Pass assistant name to conversation service
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay() // Add human-like delay service
     };
 
     this.bots.set(botId, botData);
     this.setupBotEvents(botData);
+    this.setupRetryCallbacks(botData);
     
     // Emit bot created event
     this.io.emit('bot-created', {
@@ -345,16 +352,30 @@ export class BotManager {
       return;
     }
     
-    // Check chat-specific cooldown (configurable cooldown between responses to same chat)
+    // Check for spam prevention (very rapid messages only)
     const lastResponseTime = botData.chatCooldowns.get(chatId);
+    const lastMessageTime = botData.lastMessageTimes?.get(chatId) || 0;
     const now = Date.now();
-    const cooldownPeriod = parseInt(process.env.BOT_CHAT_COOLDOWN_MS) || 6000; // Default 6 seconds
     
-    if (lastResponseTime && (now - lastResponseTime) < cooldownPeriod) {
-      const remainingCooldown = Math.ceil((cooldownPeriod - (now - lastResponseTime)) / 1000);
-      console.log(`Bot ${botData.id} - Chat ${chatId} is in cooldown for ${remainingCooldown} more seconds`);
-      return; // Just ignore messages during cooldown without any warning
+    // Track when user sent this message
+    if (!botData.lastMessageTimes) {
+      botData.lastMessageTimes = new Map();
     }
+    
+    // Only apply cooldown if:
+    // 1. User sent messages very rapidly (less than 2 seconds apart) AND
+    // 2. Bot recently responded (less than 3 seconds ago)
+    const messageTooFast = (now - lastMessageTime) < 2000; // Messages less than 2 seconds apart
+    const botRecentlyResponded = lastResponseTime && (now - lastResponseTime) < 3000; // Bot responded less than 3 seconds ago
+    
+    if (messageTooFast && botRecentlyResponded) {
+      const remainingCooldown = Math.ceil((3000 - (now - lastResponseTime)) / 1000);
+      console.log(`Bot ${botData.id} - Chat ${chatId} rate limited for ${remainingCooldown} more seconds (spam prevention)`);
+      return; // Prevent spam but allow normal conversation flow
+    }
+    
+    // Update last message time for this chat
+    botData.lastMessageTimes.set(chatId, now);
 
     // Set processing flag AFTER cooldown check to prevent getting stuck
     botData.isProcessing = true;
@@ -372,6 +393,9 @@ export class BotManager {
       
       console.log(`Bot ${botData.id} received message from ${contactName}: ${message.body}`);
 
+      // Simulate reading the message first (longer messages take more time to read)
+      await botData.humanLikeDelay.simulateReading(message.body.length);
+
       // Add human-like typing delay using the bot's delay service
       await botData.humanLikeDelay.simulateTyping(chat);
 
@@ -388,17 +412,20 @@ export class BotManager {
       // Add human-like delay before sending response
       await botData.humanLikeDelay.waitBeforeResponse();
 
-      // Send the response
-      await chat.sendMessage(response);
+      // Send the response (split if too long for WhatsApp)
+      await this.sendLongMessage(chat, response, botData.humanLikeDelay);
       
       // Update chat cooldown
       botData.chatCooldowns.set(chatId, Date.now());
       
-      // Clean up old cooldowns (keep only last 50 chats to prevent memory leak)
+      // Clean up old cooldowns and message times (keep only last 50 chats to prevent memory leak)
       if (botData.chatCooldowns.size > 50) {
         const entries = Array.from(botData.chatCooldowns.entries());
         const toRemove = entries.slice(0, entries.length - 50);
-        toRemove.forEach(([id]) => botData.chatCooldowns.delete(id));
+        toRemove.forEach(([id]) => {
+          botData.chatCooldowns.delete(id);
+          botData.lastMessageTimes?.delete(id);
+        });
       }
       
       console.log(`Bot ${botData.id} sent response: ${response.substring(0, 100)}...`);
@@ -409,7 +436,7 @@ export class BotManager {
       try {
         // Send a fallback message with human-like delay
         await botData.humanLikeDelay.waitBeforeResponse();
-        await chat.sendMessage('Sorry, I\'m having trouble responding right now. Please try again later.');
+        await chat.sendMessage('Desculpe, estou com dificuldades técnicas. Tente novamente mais tarde.');
         
         // Update chat cooldown even for fallback messages
         botData.chatCooldowns.set(chatId, Date.now());
@@ -459,6 +486,7 @@ export class BotManager {
     return Array.from(this.bots.values()).map(bot => ({
       id: bot.id,
       name: bot.name,
+      assistantName: bot.assistantName, // Include assistant name
       status: bot.status,
       phoneNumber: bot.phoneNumber,
       isActive: bot.isActive,
@@ -545,5 +573,123 @@ export class BotManager {
       this.emitBotUpdate(botId);
       return false;
     }
+  }
+
+  setupRetryCallbacks(botData) {
+    const onRetrySuccess = async (phone, response) => {
+      try {
+        // Find the chat for this phone number and send the retry response
+        const contacts = await botData.client.getContacts();
+        const contact = contacts.find(c => c.number === phone);
+        
+        if (contact) {
+          const chat = await contact.getChat();
+          
+          // Add human-like delay
+          await botData.humanLikeDelay.simulateTyping(chat);
+          await botData.humanLikeDelay.waitBeforeResponse();
+          
+          // Send the successful retry response (split if too long)
+          await this.sendLongMessage(chat, response, botData.humanLikeDelay);
+          
+          console.log(`Retry success message sent to ${phone}: ${response.substring(0, 100)}...`);
+        }
+      } catch (error) {
+        console.error(`Error sending retry success message to ${phone}:`, error);
+      }
+    };
+
+    const onRetryFailed = async (phone, failMessage) => {
+      try {
+        // Find the chat for this phone number and send the failure message
+        const contacts = await botData.client.getContacts();
+        const contact = contacts.find(c => c.number === phone);
+        
+        if (contact) {
+          const chat = await contact.getChat();
+          
+          // Add human-like delay
+          await botData.humanLikeDelay.waitBeforeResponse();
+          
+          // Send the failure message
+          await chat.sendMessage(failMessage);
+          
+          console.log(`Retry failed message sent to ${phone}: ${failMessage}`);
+        }
+      } catch (error) {
+        console.error(`Error sending retry failed message to ${phone}:`, error);
+      }
+    };
+
+    // Set the callbacks in the conversation flow service
+    botData.conversationFlowService.setRetryCallbacks(onRetrySuccess, onRetryFailed);
+  }
+
+  /**
+   * Send long messages by splitting them if they exceed WhatsApp's character limit
+   */
+  async sendLongMessage(chat, message, humanLikeDelay) {
+    const MAX_WHATSAPP_MESSAGE_LENGTH = 4000; // Safe limit under WhatsApp's 4096
+    
+    if (message.length <= MAX_WHATSAPP_MESSAGE_LENGTH) {
+      // Message is short enough, send normally
+      await chat.sendMessage(message);
+      return;
+    }
+    
+    // Split long message into parts
+    const parts = this.splitMessage(message, MAX_WHATSAPP_MESSAGE_LENGTH);
+    
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        // Add a small delay between parts to seem more natural
+        await humanLikeDelay.sleep(1000 + Math.random() * 2000); // 1-3 seconds
+      }
+      
+      const part = parts[i];
+      const partIndicator = parts.length > 1 ? ` (${i + 1}/${parts.length})` : '';
+      
+      await chat.sendMessage(part + partIndicator);
+    }
+  }
+
+  /**
+   * Split a message into smaller parts, trying to break at natural points
+   */
+  splitMessage(message, maxLength) {
+    if (message.length <= maxLength) {
+      return [message];
+    }
+    
+    const parts = [];
+    let remaining = message;
+    
+    while (remaining.length > maxLength) {
+      let splitIndex = maxLength;
+      
+      // Try to find a good breaking point (sentence end, paragraph, etc.)
+      const breakPoints = ['. ', '.\n', '? ', '?\n', '! ', '!\n'];
+      let bestBreak = -1;
+      
+      for (const breakPoint of breakPoints) {
+        const lastIndex = remaining.lastIndexOf(breakPoint, maxLength - breakPoint.length);
+        if (lastIndex > bestBreak && lastIndex > maxLength * 0.7) { // Don't break too early
+          bestBreak = lastIndex + breakPoint.length;
+        }
+      }
+      
+      if (bestBreak > 0) {
+        splitIndex = bestBreak;
+      }
+      
+      parts.push(remaining.substring(0, splitIndex).trim());
+      remaining = remaining.substring(splitIndex).trim();
+    }
+    
+    if (remaining.length > 0) {
+      parts.push(remaining);
+    }
+    
+    return parts;
   }
 }

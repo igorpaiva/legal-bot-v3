@@ -13,7 +13,8 @@ A comprehensive WhatsApp bot system with an admin panel that allows you to manag
 ### 🎯 Human-like Behavior
 - Human-like random delays between messages
 - Simulated typing indicators
-- Reading delay simulation based on message length
+- **Intelligent reading delay simulation** - Longer messages require more reading time (configurable reading speed)
+- **Dynamic complexity adjustment** - Longer/complex messages take proportionally more time to process
 - Time-based response patterns (faster during business hours)
 - Anti-detection mechanisms to prevent WhatsApp from identifying bot activity
 
@@ -102,6 +103,12 @@ A comprehensive WhatsApp bot system with an admin panel that allows you to manag
    BOT_TYPING_DELAY_MIN=500
    BOT_TYPING_DELAY_MAX=2000
    
+   # Reading Delay Configuration (realistic reading times)
+   BOT_READING_SPEED_WPM=250
+   BOT_READING_COMPLEXITY_THRESHOLD=200
+   BOT_READING_MIN_DELAY=500
+   BOT_READING_MAX_DELAY=45000
+   
    # Server Configuration
    PORT=3001
    NODE_ENV=development
@@ -180,6 +187,12 @@ BOT_RESPONSE_DELAY_MAX=5000    # Maximum delay before responding
 # Typing simulation delays
 BOT_TYPING_DELAY_MIN=500       # Minimum typing indicator duration
 BOT_TYPING_DELAY_MAX=2000      # Maximum typing indicator duration
+
+# Reading delay simulation (intelligent message processing)
+BOT_READING_SPEED_WPM=250           # Words per minute reading speed (default: 250)
+BOT_READING_COMPLEXITY_THRESHOLD=200 # Character count where complexity factor starts
+BOT_READING_MIN_DELAY=500           # Minimum reading delay in milliseconds
+BOT_READING_MAX_DELAY=45000         # Maximum reading delay (45 seconds for very long messages)
 ```
 
 ### AI Response Configuration
