@@ -8,6 +8,7 @@ import { LegalTriageService } from './LegalTriageService.js';
 import { BotPersistence } from './BotPersistence.js';
 import { ConversationFlowService } from './ConversationFlowService.js';
 import { AudioTranscriptionService } from './AudioTranscriptionService.js';
+import { PdfProcessingService } from './PdfProcessingService.js';
 
 export class BotManager {
   constructor(io) {
@@ -104,7 +105,8 @@ export class BotManager {
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana'), // Pass assistant name
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
-        audioTranscriptionService: new AudioTranscriptionService() // Add audio transcription service
+        audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
+        pdfProcessingService: new PdfProcessingService() // Add PDF processing service
       };
 
       this.bots.set(config.id, botData);
@@ -202,7 +204,8 @@ export class BotManager {
       conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName), // Pass assistant name to conversation service
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
-      audioTranscriptionService: new AudioTranscriptionService() // Add audio transcription service
+      audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
+      pdfProcessingService: new PdfProcessingService() // Add PDF processing service
     };
 
     this.bots.set(botId, botData);
@@ -419,6 +422,73 @@ export class BotManager {
           console.error(`Bot ${botData.id} - Error processing audio:`, error);
           messageText = 'Desculpe, tive problemas para processar o áudio. Pode tentar enviar uma mensagem de texto?';
         }
+      } else if (message.type === 'document') {
+        // Handle document messages (including PDFs)
+        console.log(`Bot ${botData.id} - Processing document from ${contactName}`);
+        
+        try {
+          // Download the document
+          const media = await message.downloadMedia();
+          
+          // Check if it's a PDF
+          if (media.mimetype && botData.pdfProcessingService.isPdfMimetype(media.mimetype)) {
+            console.log(`Bot ${botData.id} - Processing PDF document from ${contactName}`);
+            
+            // Process PDF and extract text
+            const pdfText = await botData.pdfProcessingService.processPdf(media);
+            
+            if (pdfText && !pdfText.includes('Desculpe')) {
+              // Format the PDF text for legal context
+              messageText = botData.pdfProcessingService.formatPdfTextForLegal(pdfText);
+              console.log(`Bot ${botData.id} - PDF processed: ${pdfText.substring(0, 200)}...`);
+            } else {
+              // PDF processing failed - send error message directly and return
+              console.log(`Bot ${botData.id} - Failed to process PDF, sending error message directly`);
+              
+              // Add human-like delay before sending error response
+              await botData.humanLikeDelay.simulateReading(pdfText.length);
+              await botData.humanLikeDelay.simulateTyping(chat);
+              await botData.humanLikeDelay.waitBeforeResponse();
+              
+              // Send error message directly to user
+              await this.sendLongMessage(chat, pdfText, botData.humanLikeDelay);
+              console.log(`Bot ${botData.id} sent PDF error response to ${contactName}: ${pdfText.substring(0, 100)}...`);
+              
+              return; // Don't process this through conversation flow
+            }
+          } else {
+            // Unsupported document type - send error message directly and return
+            const errorMessage = 'Desculpe, apenas documentos PDF são suportados. Pode enviar um PDF ou me contar sobre o documento por texto/áudio?';
+            console.log(`Bot ${botData.id} - Unsupported document type: ${media.mimetype}, sending error directly`);
+            
+            // Add human-like delay before sending error response
+            await botData.humanLikeDelay.simulateReading(errorMessage.length);
+            await botData.humanLikeDelay.simulateTyping(chat);
+            await botData.humanLikeDelay.waitBeforeResponse();
+            
+            // Send error message directly to user
+            await this.sendLongMessage(chat, errorMessage, botData.humanLikeDelay);
+            console.log(`Bot ${botData.id} sent document type error to ${contactName}`);
+            
+            return; // Don't process this through conversation flow
+          }
+        } catch (error) {
+          console.error(`Bot ${botData.id} - Error processing document:`, error);
+          
+          // Document processing error - send error message directly and return
+          const errorMessage = 'Desculpe, tive problemas para processar o documento. Pode tentar enviar novamente ou me contar sobre o conteúdo por texto/áudio?';
+          
+          // Add human-like delay before sending error response
+          await botData.humanLikeDelay.simulateReading(errorMessage.length);
+          await botData.humanLikeDelay.simulateTyping(chat);
+          await botData.humanLikeDelay.waitBeforeResponse();
+          
+          // Send error message directly to user
+          await this.sendLongMessage(chat, errorMessage, botData.humanLikeDelay);
+          console.log(`Bot ${botData.id} sent document processing error to ${contactName}`);
+          
+          return; // Don't process this through conversation flow
+        }
       } else if (message.type === 'chat' && message.body) {
         // Handle regular text messages
         messageText = message.body;
@@ -426,7 +496,7 @@ export class BotManager {
       } else {
         // Handle unsupported message types
         console.log(`Bot ${botData.id} - Unsupported message type: ${message.type}`);
-        messageText = 'Desculpe, posso responder apenas a mensagens de texto e áudio. Como posso ajudá-lo hoje?';
+        messageText = 'Desculpe, posso responder a mensagens de texto, áudio e documentos PDF. Como posso ajudá-lo hoje?';
       }
 
       // Simulate reading the message first (longer messages take more time to read)
