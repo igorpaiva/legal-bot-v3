@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -23,23 +23,25 @@ import {
   IconButton,
   Tooltip,
   CircularProgress,
-  Grid,
   Divider,
   List,
   ListItem,
   ListItemText,
-  Alert
+  Alert,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  SelectChangeEvent
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   Visibility as VisibilityIcon,
   PictureAsPdf as PdfIcon,
-  Download as DownloadIcon,
   Refresh as RefreshIcon,
   GetApp as GetAppIcon
 } from '@mui/icons-material';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
 import api from '../services/api';
 
 interface ConversationData {
@@ -60,32 +62,96 @@ interface ConversationData {
 
 interface ReportsProps {}
 
+const legalFields = [
+  'Trabalhista',
+  'Civil', 
+  'Penal',
+  'Empresarial',
+  'Tributário',
+  'Administrativo',
+  'Constitucional',
+  'Família',
+  'Consumidor',
+  'Imobiliário',
+  'Previdenciário',
+  'Internacional',
+  'Outros'
+];
+
 const Reports: React.FC<ReportsProps> = () => {
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [legalFieldFilter, setLegalFieldFilter] = useState<string>('all');
+  const [useMockData, setUseMockData] = useState(false);
+  const [chartExpanded, setChartExpanded] = useState(true);
 
-  const loadConversations = async () => {
+  const generateMockData = (): ConversationData[] => {
+    const mockConversations: ConversationData[] = [];
+    const names = ['Maria Silva', 'João Santos', 'Ana Costa', 'Pedro Oliveira', 'Carla Mendes', 'Paulo Lima', 'Fernanda Rocha', 'Ricardo Almeida'];
+    const urgencies = ['alta', 'media', 'baixa'];
+    const states = ['COMPLETED', 'ANALYZING_CASE', 'COLLECTING_DETAILS', 'AWAITING_LAWYER'];
+    
+    for (let i = 0; i < 50; i++) {
+      const randomName = names[Math.floor(Math.random() * names.length)];
+      const randomUrgency = urgencies[Math.floor(Math.random() * urgencies.length)];
+      const randomState = states[Math.floor(Math.random() * states.length)];
+      const randomLegalField = legalFields[Math.floor(Math.random() * legalFields.length)];
+      
+      mockConversations.push({
+        id: `mock-${i}`,
+        client: {
+          name: randomName,
+          phone: `+55119${Math.floor(10000000 + Math.random() * 90000000)}`,
+          email: `${randomName.toLowerCase().replace(' ', '.')}@email.com`
+        },
+        state: randomState,
+        startTime: new Date(Date.now() - Math.floor(Math.random() * 30) * 24 * 60 * 60 * 1000).toISOString(),
+        lastActivity: new Date(Date.now() - Math.floor(Math.random() * 24) * 60 * 60 * 1000).toISOString(),
+        urgency: randomUrgency,
+        botId: 'bot-1',
+        botName: 'Legal Bot',
+        triageAnalysis: {
+          case: {
+            category: randomLegalField,
+            description: `Consulta sobre ${randomLegalField.toLowerCase()}`,
+            urgency: randomUrgency
+          }
+        }
+      });
+    }
+    return mockConversations;
+  };
+
+  const loadConversations = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await api.get('/admin/triages');
-      if (response.data.triages) {
-        setConversations(response.data.triages);
+      if (useMockData) {
+        // Use mock data immediately
+        setConversations(generateMockData());
+      } else {
+        // Load real data from API
+        const response = await api.get('/admin/triages');
+        if (response.data.triages) {
+          setConversations(response.data.triages);
+        }
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [useMockData]);
 
   useEffect(() => {
     loadConversations();
-    // Refresh every 30 seconds
-    const interval = setInterval(loadConversations, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    // Refresh every 30 seconds only when using real data
+    if (!useMockData) {
+      const interval = setInterval(loadConversations, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [useMockData, loadConversations]);
 
   const handleViewDetails = (conversation: ConversationData) => {
     setSelectedConversation(conversation);
@@ -126,15 +192,15 @@ const Reports: React.FC<ReportsProps> = () => {
 
   const exportReport = () => {
     const csvContent = [
-      ['Data', 'Cliente', 'Telefone', 'Estado', 'Urgência', 'Bot', 'Categoria'].join(','),
-      ...conversations.map(conv => [
+      ['Data', 'Cliente', 'Telefone', 'Estado', 'Urgência', 'Área Jurídica', 'Bot'].join(','),
+      ...filteredConversations.map(conv => [
         formatDate(conv.startTime),
         conv.client.name || 'N/A',
         conv.client.phone,
         getStateLabel(conv.state),
         conv.urgency || 'N/A',
-        conv.botName,
-        conv.triageAnalysis?.case?.category || 'N/A'
+        conv.triageAnalysis?.case?.category || 'Outros',
+        conv.botName
       ].join(','))
     ].join('\n');
 
@@ -145,235 +211,67 @@ const Reports: React.FC<ReportsProps> = () => {
     link.click();
   };
 
-  const exportToPDF = (conversation?: ConversationData) => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.width;
-    const pageHeight = doc.internal.pageSize.height;
-    const margin = 20;
-    const lineHeight = 6;
-    const maxWidth = pageWidth - 2 * margin;
-    let yPos = 30;
-    
-    // Helper function to add new page if needed
-    const checkPageBreak = (requiredHeight: number) => {
-      if (yPos + requiredHeight > pageHeight - margin) {
-        doc.addPage();
-        yPos = margin;
-      }
-    };
-    
-    // Helper function to add wrapped text
-    const addWrappedText = (text: string, fontSize: number, fontStyle: string = 'normal') => {
-      doc.setFontSize(fontSize);
-      doc.setFont('helvetica', fontStyle);
+  const exportToPDF = async (conversation?: ConversationData) => {
+    try {
+      let url: string;
+      let filename: string;
       
-      const lines = doc.splitTextToSize(text, maxWidth);
-      const requiredHeight = lines.length * lineHeight;
-      
-      checkPageBreak(requiredHeight);
-      
-      doc.text(lines, margin, yPos);
-      yPos += requiredHeight + 3;
-    };
-    
-    // Add title
-    addWrappedText('RELATÓRIO DE TRIAGEM JURÍDICA', 18, 'bold');
-    yPos += 5;
-    
-    if (conversation) {
-      // Single conversation report
-      addWrappedText('DADOS DO CLIENTE', 14, 'bold');
-      addWrappedText(`Nome: ${conversation.client.name || 'N/A'}`, 11);
-      addWrappedText(`WhatsApp: ${conversation.client.phone}`, 11);
-      addWrappedText(`Email: ${conversation.client.email || 'N/A'}`, 11);
-      addWrappedText(`Data da Conversa: ${new Date(conversation.startTime).toLocaleString('pt-BR')}`, 11);
-      
-      yPos += 5;
-      
-      if (conversation.triageAnalysis) {
-        const analysis = conversation.triageAnalysis;
-        
-        // Case details
-        addWrappedText('DETALHES DO CASO', 14, 'bold');
-        
-        if (analysis.case?.category) {
-          addWrappedText(`Categoria: ${analysis.case.category}`, 11);
-        }
-        
-        if (analysis.case?.urgency) {
-          addWrappedText(`Urgência: ${analysis.case.urgency.toUpperCase()}`, 11);
-        }
-        
-        if (analysis.case?.date) {
-          addWrappedText(`Data do Caso: ${analysis.case.date}`, 11);
-        }
-        
-        if (analysis.triage?.confidence) {
-          addWrappedText(`Confiança da Análise: ${(analysis.triage.confidence * 100).toFixed(1)}%`, 11);
-        }
-        
-        if (analysis.case?.description) {
-          yPos += 3;
-          addWrappedText('Descrição do Caso:', 12, 'bold');
-          addWrappedText(analysis.case.description, 10);
-        }
-        
-        if (analysis.case?.documents && analysis.case.documents.length > 0) {
-          yPos += 3;
-          addWrappedText('Documentos Mencionados:', 12, 'bold');
-          analysis.case.documents.forEach((doc: string) => {
-            addWrappedText(`• ${doc}`, 10);
-          });
-        }
-        
-        // Legal solution
-        if (analysis.legal_solution) {
-          yPos += 5;
-          addWrappedText('ANÁLISE JURÍDICA', 14, 'bold');
-          
-          const solution = analysis.legal_solution;
-          
-          if (solution.summary) {
-            addWrappedText('Resumo Legal:', 12, 'bold');
-            addWrappedText(solution.summary, 10);
-            yPos += 3;
-          }
-          
-          if (solution.legal_basis) {
-            addWrappedText('Base Legal:', 12, 'bold');
-            addWrappedText(solution.legal_basis, 10);
-            yPos += 3;
-          }
-          
-          if (solution.success_probability) {
-            addWrappedText('Probabilidade de Sucesso:', 12, 'bold');
-            addWrappedText(solution.success_probability, 10);
-            yPos += 3;
-          }
-          
-          if (solution.recommended_actions) {
-            addWrappedText('Ações Recomendadas:', 12, 'bold');
-            addWrappedText(solution.recommended_actions, 10);
-            yPos += 3;
-          }
-          
-          if (solution.timeline) {
-            addWrappedText('Cronograma:', 12, 'bold');
-            addWrappedText(solution.timeline, 10);
-            yPos += 3;
-          }
-          
-          if (solution.estimated_costs) {
-            addWrappedText('Custos Estimados:', 12, 'bold');
-            addWrappedText(solution.estimated_costs, 10);
-            yPos += 3;
-          }
-          
-          if (solution.required_documents) {
-            addWrappedText('Documentos Necessários:', 12, 'bold');
-            addWrappedText(solution.required_documents, 10);
-            yPos += 3;
-          }
-          
-          if (solution.risks_and_alternatives) {
-            addWrappedText('Riscos e Alternativas:', 12, 'bold');
-            addWrappedText(solution.risks_and_alternatives, 10);
-          }
-        }
-        
-        // Triage information
-        if (analysis.triage) {
-          yPos += 5;
-          addWrappedText('INFORMAÇÕES DE TRIAGEM', 14, 'bold');
-          
-          addWrappedText(`Escalação Necessária: ${analysis.triage.escalate ? 'Sim' : 'Não'}`, 11);
-          
-          if (analysis.triage.recommended_action) {
-            addWrappedText('Ação Recomendada:', 12, 'bold');
-            addWrappedText(analysis.triage.recommended_action, 10);
-          }
-          
-          if (analysis.triage.flags && analysis.triage.flags.length > 0) {
-            addWrappedText('Flags:', 12, 'bold');
-            addWrappedText(analysis.triage.flags.join(', '), 10);
-          }
-        }
+      if (conversation) {
+        // Single conversation PDF
+        url = `/api/pdf/conversation/${conversation.id}`;
+        filename = `relatorio-${(conversation.client.name || 'cliente').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
+      } else {
+        // Summary PDF
+        url = `/api/pdf/summary`;
+        filename = `relatorio-geral-${new Date().toISOString().split('T')[0]}.pdf`;
       }
       
-      // Add footer
-      checkPageBreak(20);
-      yPos = pageHeight - margin - 10;
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, margin, yPos);
-      doc.text('BriseWare - Sistema de Triagem Jurídica', pageWidth - margin - 80, yPos);
+      // Create a temporary link to download the PDF
+      const response = await fetch(url);
       
-      doc.save(`relatorio-${(conversation.client.name || 'cliente').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`);
-    } else {
-      // Multiple conversations summary
-      addWrappedText('RELATÓRIO GERAL DE CONVERSAS', 16, 'bold');
-      addWrappedText(`Total de conversas analisadas: ${conversations.length}`, 12);
-      addWrappedText(`Data de geração: ${new Date().toLocaleString('pt-BR')}`, 12);
+      if (!response.ok) {
+        throw new Error('Failed to generate PDF');
+      }
       
-      yPos += 10;
-      
-      // Summary statistics
-      addWrappedText('ESTATÍSTICAS GERAIS', 14, 'bold');
-      addWrappedText(`Total de Conversas: ${conversations.length}`, 11);
-      addWrappedText(`Urgência Alta: ${conversations.filter(c => c.urgency === 'alta').length}`, 11);
-      addWrappedText(`Em Andamento: ${conversations.filter(c => c.state !== 'COMPLETED').length}`, 11);
-      addWrappedText(`Concluídas: ${conversations.filter(c => c.state === 'COMPLETED').length}`, 11);
-      
-      yPos += 10;
-      
-      // Table header
-      addWrappedText('LISTA DETALHADA DE CONVERSAS', 14, 'bold');
-      
-      // Create table data
-      const tableData = conversations.map(conv => [
-        conv.client.name || 'N/A',
-        conv.client.phone,
-        conv.triageAnalysis?.case?.category || 'N/A',
-        conv.triageAnalysis?.case?.urgency || 'N/A',
-        new Date(conv.startTime).toLocaleDateString('pt-BR')
-      ]);
-      
-      // Use autoTable for better formatting
-      (doc as any).autoTable({
-        head: [['Cliente', 'WhatsApp', 'Categoria', 'Urgência', 'Data']],
-        body: tableData,
-        startY: yPos,
-        styles: { 
-          fontSize: 9,
-          cellPadding: 3,
-        },
-        headStyles: { 
-          fillColor: [37, 211, 102],
-          textColor: [255, 255, 255],
-          fontStyle: 'bold'
-        },
-        columnStyles: {
-          0: { cellWidth: 35 },
-          1: { cellWidth: 35 },
-          2: { cellWidth: 35 },
-          3: { cellWidth: 20 },
-          4: { cellWidth: 25 }
-        },
-        margin: { left: margin, right: margin },
-        didDrawPage: function(data: any) {
-          // Add footer to each page
-          const pageCount = doc.getNumberOfPages();
-          const currentPage = data.pageNumber;
-          
-          doc.setFontSize(8);
-          doc.text(`Página ${currentPage} de ${pageCount}`, pageWidth - margin - 30, pageHeight - 10);
-          doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, margin, pageHeight - 10);
-        }
-      });
-      
-      doc.save(`relatorio-geral-${new Date().toISOString().split('T')[0]}.pdf`);
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Erro ao gerar PDF. Tente novamente.');
     }
   };
+
+  // Filter conversations by legal field
+  const filteredConversations = legalFieldFilter === 'all' 
+    ? conversations 
+    : conversations.filter(conv => 
+        (conv.triageAnalysis?.case?.category || 'Outros') === legalFieldFilter
+      );
+
+  // Prepare chart data for legal fields distribution
+  const chartData = legalFields.map((field) => {
+    const count = conversations.filter(c => 
+      (c.triageAnalysis?.case?.category || 'Outros') === field
+    ).length;
+    return {
+      name: field,
+      count: count
+    };
+  }).filter(item => item.count > 0); // Only show fields with data
+
+  // Colors for the chart bars
+  const chartColors = [
+    '#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#ff0000',
+    '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff',
+    '#800080', '#ffa500', '#a52a2a'
+  ];
 
   if (loading) {
     return (
@@ -390,6 +288,14 @@ const Reports: React.FC<ReportsProps> = () => {
           📊 Relatórios Detalhados
         </Typography>
         <Box>
+          <Button
+            variant={useMockData ? "contained" : "outlined"}
+            onClick={() => setUseMockData(!useMockData)}
+            sx={{ mr: 1 }}
+            color={useMockData ? "secondary" : "primary"}
+          >
+            {useMockData ? "Dados Reais" : "Dados Demo"}
+          </Button>
           <Tooltip title="Atualizar">
             <IconButton onClick={loadConversations} color="primary">
               <RefreshIcon />
@@ -415,6 +321,32 @@ const Reports: React.FC<ReportsProps> = () => {
         </Box>
       </Box>
 
+      {/* Legal Field Filter and Mock Data Indicator */}
+      <Box display="flex" alignItems="center" gap={2} mb={3}>
+        <FormControl sx={{ minWidth: 200 }}>
+          <InputLabel>Filtrar por Área Jurídica</InputLabel>
+          <Select
+            value={legalFieldFilter}
+            label="Filtrar por Área Jurídica"
+            onChange={(e: SelectChangeEvent<string>) => setLegalFieldFilter(e.target.value)}
+          >
+            <MenuItem value="all">Todas as Áreas</MenuItem>
+            {legalFields.map((field) => (
+              <MenuItem key={field} value={field}>
+                {field}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {useMockData && (
+          <Chip 
+            label="Dados de Demonstração" 
+            color="warning" 
+            variant="outlined"
+          />
+        )}
+      </Box>
+
       {/* Summary Cards */}
       <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr 1fr' }} gap={3} mb={4}>
         <Card>
@@ -423,7 +355,7 @@ const Reports: React.FC<ReportsProps> = () => {
               Total de Conversas
             </Typography>
             <Typography variant="h4">
-              {conversations.length}
+              {filteredConversations.length}
             </Typography>
           </CardContent>
         </Card>
@@ -433,7 +365,7 @@ const Reports: React.FC<ReportsProps> = () => {
               Urgência Alta
             </Typography>
             <Typography variant="h4" color="error">
-              {conversations.filter(c => c.urgency === 'alta').length}
+              {filteredConversations.filter(c => c.urgency === 'alta').length}
             </Typography>
           </CardContent>
         </Card>
@@ -443,7 +375,7 @@ const Reports: React.FC<ReportsProps> = () => {
               Em Andamento
             </Typography>
             <Typography variant="h4" color="warning.main">
-              {conversations.filter(c => c.state !== 'COMPLETED').length}
+              {filteredConversations.filter(c => c.state !== 'COMPLETED').length}
             </Typography>
           </CardContent>
         </Card>
@@ -453,11 +385,59 @@ const Reports: React.FC<ReportsProps> = () => {
               Concluídas
             </Typography>
             <Typography variant="h4" color="success.main">
-              {conversations.filter(c => c.state === 'COMPLETED').length}
+              {filteredConversations.filter(c => c.state === 'COMPLETED').length}
             </Typography>
           </CardContent>
         </Card>
       </Box>
+
+      {/* Legal Fields Distribution Chart */}
+      {legalFieldFilter === 'all' && chartData.length > 0 && (
+        <Box mb={4}>
+          <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+            <Typography variant="h6">
+              📊 Distribuição por Área Jurídica
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setChartExpanded(!chartExpanded)}
+              startIcon={<ExpandMoreIcon sx={{ 
+                transform: chartExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.3s ease'
+              }} />}
+            >
+              {chartExpanded ? 'Ocultar' : 'Mostrar'}
+            </Button>
+          </Box>
+          {chartExpanded && (
+            <Paper sx={{ p: 3 }}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="name" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={100}
+                    fontSize={12}
+                  />
+                  <YAxis />
+                  <RechartsTooltip 
+                    formatter={(value) => [value, 'Conversas']}
+                    labelFormatter={(label) => `Área: ${label}`}
+                  />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    {chartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Paper>
+          )}
+        </Box>
+      )}
 
       {/* Conversations Table */}
       <Paper>
@@ -470,12 +450,13 @@ const Reports: React.FC<ReportsProps> = () => {
                 <TableCell>Telefone</TableCell>
                 <TableCell>Estado</TableCell>
                 <TableCell>Urgência</TableCell>
+                <TableCell>Área Jurídica</TableCell>
                 <TableCell>Bot</TableCell>
                 <TableCell>Ações</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {conversations.map((conversation) => (
+              {filteredConversations.map((conversation) => (
                 <TableRow key={conversation.id}>
                   <TableCell>
                     {formatDate(conversation.startTime)}
@@ -498,6 +479,14 @@ const Reports: React.FC<ReportsProps> = () => {
                       label={conversation.urgency || 'N/A'}
                       color={getUrgencyColor(conversation.urgency || '')}
                       size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip 
+                      label={conversation.triageAnalysis?.case?.category || 'Outros'}
+                      size="small"
+                      variant="filled"
+                      color="primary"
                     />
                   </TableCell>
                   <TableCell>

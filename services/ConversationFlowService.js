@@ -88,9 +88,12 @@ export class ConversationFlowService {
   }
 
   findOrCreateActiveConversation(client) {
+    console.log(`[DEBUG] findOrCreateActiveConversation - Looking for conversation for client: ${client.phone}`);
+    
     // Find active conversation for this client
     for (const [id, conv] of this.conversations.entries()) {
       if (conv.client.phone === client.phone && conv.state !== 'COMPLETED') {
+        console.log(`[DEBUG] findOrCreateActiveConversation - Found existing conversation: ${id}, state: ${conv.state}`);
         return conv;
       }
     }
@@ -105,12 +108,14 @@ export class ConversationFlowService {
       conversationHistory: [] // Initialize the conversation history array
     };
     
+    console.log(`[DEBUG] findOrCreateActiveConversation - Created new conversation: ${conversation.id} for client: ${client.phone}`);
     this.conversations.set(conversation.id, conversation);
     return conversation;
   }
 
   async processConversationState(conversation, messageText, client) {
     const state = conversation.state;
+    console.log(`[DEBUG] processConversationState - Conversation ID: ${conversation.id}, State: ${state}, Client: ${client.phone}, Message: "${messageText}"`);
     
     switch (state) {
       case 'GREETING':
@@ -127,12 +132,80 @@ export class ConversationFlowService {
         return await this.handleDocumentCollection(conversation, messageText, client);
       case 'AWAITING_LAWYER':
         return await this.handleAwaitingLawyer(conversation, messageText, client);
+      case 'AWAITING_PREANALYSIS_DECISION':
+        return await this.handlePreAnalysisDecision(conversation, messageText, client);
       default:
         return await this.handleGreeting(conversation, messageText, client);
     }
   }
 
   async handleGreeting(conversation, messageText, client) {
+    // Check if the message looks like case details rather than a greeting
+    const lowerText = messageText.toLowerCase();
+    const isLikelyGreeting = lowerText.includes('olá') || 
+                            lowerText.includes('oi') || 
+                            lowerText.includes('bom dia') ||
+                            lowerText.includes('boa tarde') ||
+                            lowerText.includes('boa noite') ||
+                            lowerText.includes('tudo bem') ||
+                            messageText.length < 30;
+    
+    // If it doesn't look like a greeting and they have name/email, assume they're providing case details
+    if (!isLikelyGreeting && client.name && client.name.length > 3 && client.email && client.email.includes('@')) {
+      console.log(`[DEBUG] handleGreeting - Message doesn't look like greeting and client has info, moving to case analysis`);
+      conversation.state = 'ANALYZING_CASE';
+      return await this.handleCaseAnalysis(conversation, messageText, client);
+    }
+    
+    // Check if we already have name and email, skip to case analysis
+    if (client.name && client.name.length > 3 && client.email && client.email.includes('@')) {
+      console.log(`[DEBUG] handleGreeting - Client already has name and email, moving to case analysis`);
+      conversation.state = 'ANALYZING_CASE';
+      
+      const firstName = client.name.split(' ')[0];
+      
+      // AI generates natural greeting and transition to case discussion
+      const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) está retornando.
+
+SITUAÇÃO: O cliente já forneceu nome e email anteriormente.
+
+TAREFA: Fazer uma saudação calorosa reconhecendo que já se conhecem e ir direto ao caso.
+
+INSTRUÇÕES:
+- Cumprimente usando o primeiro nome (${firstName})
+- Reconheça que já se conhecem
+- Convide a pessoa a contar sobre a situação jurídica
+- Seja calorosa mas objetiva
+- Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(greetingPrompt);
+    }
+    
+    // Check if we have name but no email
+    if (client.name && client.name.length > 3) {
+      console.log(`[DEBUG] handleGreeting - Client has name but no email, moving to email collection`);
+      conversation.state = 'COLLECTING_EMAIL';
+      
+      const firstName = client.name.split(' ')[0];
+      
+      const emailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) está retornando.
+
+SITUAÇÃO: Você já conhece o nome da pessoa mas precisa do email.
+
+INSTRUÇÕES:
+- Cumprimente usando o primeiro nome (${firstName})
+- Peça o email de forma natural
+- Explique brevemente por que precisa (para atualizações)
+- Seja calorosa mas objetiva
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(emailPrompt);
+    }
+    
+    // Normal greeting flow - ask for name
     conversation.state = 'COLLECTING_NAME';
     
     // Let AI generate a completely natural greeting
@@ -156,12 +229,43 @@ Responda APENAS com sua mensagem em português:`;
   }
 
   async handleNameCollection(conversation, messageText, client) {
+    console.log(`[DEBUG] handleNameCollection - Input: "${messageText}"`);
+    console.log(`[DEBUG] handleNameCollection - Current client name: "${client.name}"`);
+    console.log(`[DEBUG] handleNameCollection - Conversation state: "${conversation.state}"`);
+    
+    // If client already has a name and they're just providing it again or giving details, skip to email
+    if (client.name && client.name.length > 3) {
+      console.log(`[DEBUG] handleNameCollection - Client already has name, moving to email collection`);
+      conversation.state = 'COLLECTING_EMAIL';
+      
+      const firstName = client.name.split(' ')[0];
+      
+      // Let AI generate natural response asking for email
+      const emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${client.name}".
+
+SITUAÇÃO: Agora você precisa do email da pessoa para enviar atualizações sobre o caso.
+
+INSTRUÇÕES:
+- Reconheça o nome de forma calorosa (use "${firstName}")
+- Peça o email de forma natural
+- Explique brevemente por que precisa (para atualizações)
+- Seja conversacional, não robotizada
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(emailPrompt);
+    }
+    
     const name = this.extractName(messageText);
+    console.log(`[DEBUG] handleNameCollection - Extracted name: "${name}"`);
+    
     if (name && name.length > 3) {
       client.name = name;
       this.clients.set(client.phone, client);
       
       conversation.state = 'COLLECTING_EMAIL';
+      console.log(`[DEBUG] handleNameCollection - Updated state to: "${conversation.state}"`);
+      console.log(`[DEBUG] handleNameCollection - Updated client name to: "${client.name}"`);
       
       const firstName = name.split(' ')[0];
       
@@ -180,6 +284,7 @@ Responda APENAS com sua mensagem:`;
 
       return await this.groqService.generateResponse(emailPrompt);
     } else {
+      console.log(`[DEBUG] handleNameCollection - Name not valid, asking again`);
       // AI generates natural request for name in context
       const nameRequestPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente respondeu "${messageText}" quando você pediu o nome.
 
@@ -203,12 +308,41 @@ Responda APENAS com sua mensagem:`;
   }
 
   async handleEmailCollection(conversation, messageText, client) {
+    console.log(`[DEBUG] handleEmailCollection - Input: "${messageText}"`);
+    console.log(`[DEBUG] handleEmailCollection - Current client email: "${client.email}"`);
+    
+    // If client already has an email and they're just providing it again or giving details, skip to case analysis
+    if (client.email && client.email.includes('@')) {
+      console.log(`[DEBUG] handleEmailCollection - Client already has email, moving to case analysis`);
+      conversation.state = 'ANALYZING_CASE';
+      
+      // AI generates natural transition to case discussion
+      const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) já forneceu o email "${client.email}".
+
+TAREFA: Fazer a transição natural para ouvir sobre o caso.
+
+INSTRUÇÕES:
+- Convide a pessoa a contar sobre a situação jurídica
+- Seja objetiva e empática
+- Seja concisa mas clara
+- Não use emojis
+- Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(transitionPrompt);
+    }
+    
     const email = this.extractEmail(messageText);
+    console.log(`[DEBUG] handleEmailCollection - Extracted email: "${email}"`);
+    
     if (email) {
       client.email = email;
       this.clients.set(client.phone, client);
       
       conversation.state = 'ANALYZING_CASE';
+      console.log(`[DEBUG] handleEmailCollection - Updated state to: "${conversation.state}"`);
+      console.log(`[DEBUG] handleEmailCollection - Updated client email to: "${client.email}"`);
       
       // AI generates natural transition to case discussion
       const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) acabou de fornecer o email "${email}".
@@ -227,6 +361,7 @@ Responda APENAS com sua mensagem:`;
 
       return await this.groqService.generateResponse(transitionPrompt);
     } else {
+      console.log(`[DEBUG] handleEmailCollection - Email not valid, asking again`);
       // AI generates natural request for valid email
       const emailClarificationPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente respondeu "${messageText}" quando você pediu o email.
 
@@ -318,12 +453,17 @@ Responda APENAS com sua mensagem:`;
       const response = await this.groqService.generateResponse(analysisPrompt);
       
       if (response.startsWith('FINALIZAR:')) {
-        conversation.state = 'COMPLETED';
+        conversation.state = 'AWAITING_PREANALYSIS_DECISION';
         // Save the triage analysis when conversation completes
         if (conversation.analysis) {
           this.saveTriageAnalysis(conversation, conversation.analysis);
         }
-        return response.substring(10).trim();
+        
+        // Store the completion message for later use
+        conversation.completionMessage = response.substring(10).trim();
+        
+        // Ask if client wants pre-analysis
+        return await this.askForPreAnalysis(conversation);
       } else {
         conversation.needsMoreInfo = true;
         return response;
@@ -369,12 +509,17 @@ Responda APENAS com sua mensagem:`;
       const response = await this.groqService.generateResponse(followUpPrompt);
       
       if (response.startsWith('FINALIZAR:')) {
-        conversation.state = 'COMPLETED';
+        conversation.state = 'AWAITING_PREANALYSIS_DECISION';
         // Save the triage analysis when conversation completes
         if (conversation.analysis) {
           this.saveTriageAnalysis(conversation, conversation.analysis);
         }
-        return response.substring(10).trim();
+        
+        // Store the completion message for later use
+        conversation.completionMessage = response.substring(10).trim();
+        
+        // Ask if client wants pre-analysis
+        return await this.askForPreAnalysis(conversation);
       } else {
         return response;
       }
@@ -507,6 +652,8 @@ Responda APENAS com sua mensagem:`;
   }
 
   extractName(text) {
+    console.log(`[DEBUG] extractName - Input: "${text}"`);
+    
     // Check if it's clearly a question first
     if (text.includes('?') || 
         text.toLowerCase().includes('precisa') || 
@@ -515,6 +662,7 @@ Responda APENAS com sua mensagem:`;
         text.toLowerCase().includes('pra que') ||
         text.toLowerCase().includes('tem que') ||
         text.toLowerCase().includes('obrigatório')) {
+      console.log(`[DEBUG] extractName - Detected question, returning null`);
       return null; // It's a question, not a name
     }
     
@@ -526,16 +674,19 @@ Responda APENAS com sua mensagem:`;
         lowerText.includes('boa tarde') ||
         lowerText.includes('boa noite') ||
         lowerText.includes('tudo bem')) {
+      console.log(`[DEBUG] extractName - Detected greeting, returning null`);
       return null;
     }
     
     const words = text.trim().split(/\s+/);
+    console.log(`[DEBUG] extractName - Words: ${JSON.stringify(words)}`);
     
     // If only one word and it's too short or common, probably not a name
     if (words.length === 1) {
       const word = words[0].toLowerCase();
       if (word.length < 3 || 
           ['sim', 'não', 'ok', 'certo', 'claro', 'pode', 'sei'].includes(word)) {
+        console.log(`[DEBUG] extractName - Single word rejected: "${word}"`);
         return null;
       }
     }
@@ -545,25 +696,35 @@ Responda APENAS com sua mensagem:`;
       const filtered = words.filter(word => 
         !['meu', 'nome', 'é', 'sou', 'eu', 'me', 'chamo', 'aqui', 'olá', 'oi'].includes(word.toLowerCase())
       );
+      console.log(`[DEBUG] extractName - Filtered words: ${JSON.stringify(filtered)}`);
       
-      // If after filtering we have at least one capitalized word, it might be a name
-      const hasCapitalizedWord = filtered.some(word => 
-        word.charAt(0) === word.charAt(0).toUpperCase() && word.length > 2
+      // If after filtering we have at least one word that could be a name (contains only letters)
+      const hasValidNameWord = filtered.some(word => 
+        /^[a-záàâãéèêíïóôõöúçñ]+$/i.test(word) && word.length > 1
       );
+      console.log(`[DEBUG] extractName - Has valid name word: ${hasValidNameWord}`);
       
-      if (hasCapitalizedWord && filtered.length > 0) {
-        return filtered.join(' ');
+      if (hasValidNameWord && filtered.length > 0) {
+        // Capitalize each word properly
+        const properName = filtered.map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+        console.log(`[DEBUG] extractName - Returning multi-word name: "${properName}"`);
+        return properName;
       }
     }
     
-    // For single words, check if it looks like a name (capitalized, reasonable length)
+    // For single words, check if it looks like a name (contains only letters, reasonable length)
     if (words.length === 1) {
       const word = words[0];
-      if (word.charAt(0) === word.charAt(0).toUpperCase() && word.length >= 3) {
-        return word;
+      if (/^[a-záàâãéèêíïóôõöúçñ]+$/i.test(word) && word.length >= 3) {
+        const properName = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        console.log(`[DEBUG] extractName - Returning single word name: "${properName}"`);
+        return properName;
       }
     }
     
+    console.log(`[DEBUG] extractName - No valid name found, returning null`);
     return null; // Couldn't identify a valid name
   }
 
@@ -740,6 +901,7 @@ Responda APENAS com sua mensagem:`;
         startedAt: conv.startedAt,
         lastActivityAt: conv.lastActivityAt,
         triageAnalysis: triageAnalysis,
+        preAnalysis: conv.preAnalysis, // Include pre-analysis if available
         timestamp: conv.startedAt,
         urgency: triageAnalysis?.case?.urgency || 'baixa'
       };
@@ -827,4 +989,142 @@ Responda APENAS com sua mensagem:`;
     this.onRetrySuccess = onSuccess;
     this.onRetryFailed = onFailed;
   }
+
+  /**
+   * Ask if client wants a pre-analysis of their case
+   */
+  async askForPreAnalysis(conversation) {
+    const preAnalysisPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare.
+
+Você acabou de concluir a triagem inicial de um caso jurídico. Agora deve oferecer uma pré-análise gratuita.
+
+TAREFA: Oferecer uma mini-análise do caso de forma atrativa.
+
+INSTRUÇÕES:
+- Explique que pode oferecer uma pré-análise gratuita imediata
+- Mencione que é um mini-diagnóstico com orientações iniciais
+- Pergunte se o cliente gostaria de receber essa análise
+- Seja clara que isso é adicional e gratuito
+- Use linguagem convidativa mas profissional
+- SEMPRE responda em português brasileiro
+
+FORMATO: Responda apenas com sua mensagem direta ao cliente.
+
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(preAnalysisPrompt);
+  }
+
+  /**
+   * Handle client's decision about pre-analysis
+   */
+  async handlePreAnalysisDecision(conversation, messageText, client) {
+    const decision = messageText.toLowerCase().trim();
+    
+    // Check for positive responses
+    const positiveResponses = ['sim', 'yes', 'quero', 'aceito', 'gostaria', 'ok', 'pode', 'manda', 'enviar'];
+    const negativeResponses = ['não', 'nao', 'no', 'obrigado', 'obrigada', 'dispenso', 'sem necessidade'];
+    
+    const wantsPreAnalysis = positiveResponses.some(word => decision.includes(word));
+    const doesntWantPreAnalysis = negativeResponses.some(word => decision.includes(word));
+    
+    if (wantsPreAnalysis) {
+      // Client wants pre-analysis
+      conversation.state = 'GENERATING_PREANALYSIS';
+      return await this.generatePreAnalysis(conversation);
+    } else if (doesntWantPreAnalysis) {
+      // Client doesn't want pre-analysis, complete conversation
+      conversation.state = 'COMPLETED';
+      return conversation.completionMessage || 'Entendido. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
+    } else {
+      // Unclear response, ask for clarification
+      const clarificationPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare.
+
+O cliente respondeu sobre a pré-análise mas a resposta não ficou clara: "${messageText}"
+
+TAREFA: Esclarecer se ele quer ou não a pré-análise.
+
+INSTRUÇÕES:
+- Seja educada e paciente
+- Reformule a pergunta de forma mais direta
+- Mencione que é só responder "sim" ou "não"
+- Mantenha tom amigável
+- SEMPRE responda em português brasileiro
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(clarificationPrompt);
+    }
+  }
+
+  /**
+   * Generate a pre-analysis of the case
+   */
+  async generatePreAnalysis(conversation) {
+    // Collect all the case information from stored messages
+    const messages = this.messages.get(conversation.id) || [];
+    console.log(`Debug: Found ${messages.length} messages for conversation ${conversation.id}`);
+    console.log(`Debug: Messages:`, messages.map(m => ({direction: m.direction, body: m.body?.substring(0, 50)})));
+    
+    const caseInfo = messages
+      .filter(msg => msg.direction === 'IN') // User messages are stored as 'IN'
+      .map(msg => msg.body || msg.text) // Use body or text property
+      .join('\n');
+    
+    console.log(`Debug: Extracted caseInfo length: ${caseInfo.length}`);
+    console.log(`Debug: CaseInfo preview: ${caseInfo.substring(0, 200)}...`);
+    
+    // Also include any stored case details
+    const additionalInfo = conversation.caseDetails || '';
+    const fullCaseInfo = [caseInfo, additionalInfo].filter(Boolean).join('\n\n');
+    
+    if (!fullCaseInfo || fullCaseInfo.trim().length === 0) {
+      console.log(`Debug: No case info found, falling back`);
+      // Fallback to basic conversation data if no detailed messages
+      const basicInfo = `Cliente: ${conversation.client.name}\nTelefone: ${conversation.client.phone}\nEmail: ${conversation.client.email}`;
+      return 'Desculpe, não tenho informações suficientes sobre o caso para gerar uma pré-análise detalhada. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
+    }
+    
+    const preAnalysisPrompt = `Você é uma advogada especialista brasileira fazendo uma pré-análise CONCISA de um caso jurídico.
+
+INFORMAÇÕES DO CASO:
+${fullCaseInfo}
+
+TAREFA: Criar uma pré-análise RESUMIDA e objetiva do caso.
+
+ESTRUTURA DA ANÁLISE (use markdown):
+### 1. Natureza do caso
+### 2. Principais pontos jurídicos
+### 3. Documentos essenciais
+### 4. Próximos passos
+
+INSTRUÇÕES:
+- Seja CONCISA e objetiva (máximo 2000 caracteres)
+- Use markdown para formatação (títulos com ###)
+- Linguagem técnica mas acessível
+- Seja específica sobre a situação
+- NÃO faça promessas sobre resultados
+- Mencione que é análise preliminar
+- SEMPRE responda em português brasileiro
+
+IMPORTANTE: Finalize com uma linha explicando que esta é uma análise preliminar.
+
+Responda APENAS com a pré-análise em markdown:`;
+
+    try {
+      const preAnalysis = await this.groqService.generateAnalysisResponse(preAnalysisPrompt);
+      
+      // Complete the conversation after generating pre-analysis
+      conversation.state = 'COMPLETED';
+      conversation.preAnalysis = preAnalysis; // Store the pre-analysis
+      
+      return preAnalysis;
+    } catch (error) {
+      console.error('Error generating pre-analysis:', error);
+      conversation.state = 'COMPLETED';
+      return 'Desculpe, houve um problema ao gerar a pré-análise. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
+    }
+  }
 }
+
+export default ConversationFlowService;

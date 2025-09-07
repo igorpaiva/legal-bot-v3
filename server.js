@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 
 import botRoutes from './routes/bot.js';
 import adminRoutes from './routes/admin.js';
+import pdfRoutes from './routes/pdf.js';
 import { BotManager } from './services/BotManager.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -44,18 +45,21 @@ app.use(cors({
 // Rate limiting
 app.use(rateLimiter);
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Make botManager available to routes
+// Make botManager available to routes first
 app.use((req, res, next) => {
   req.botManager = botManager;
   req.io = io;
   next();
 });
 
-// Routes
+// PDF routes without JSON middleware (for binary data)
+app.use('/api/pdf', pdfRoutes);
+
+// Body parsing middleware for other routes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Other routes
 app.use('/api/bot', botRoutes);
 app.use('/api/admin', adminRoutes);
 
