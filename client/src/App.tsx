@@ -17,6 +17,7 @@ import { io, Socket } from 'socket.io-client';
 import Dashboard from './components/Dashboard';
 import BotManager from './components/BotManager';
 import Reports from './components/Reports';
+import Lawyers from './components/Lawyers';
 import { Bot, SystemStatus } from './types';
 import './App.css';
 
@@ -145,6 +146,7 @@ function App() {
             <Tabs value={tabValue} onChange={handleTabChange} aria-label="admin panel tabs">
               <Tab label="Dashboard" />
               <Tab label="Relatórios" />
+              <Tab label="Advogados" />
             </Tabs>
           </Box>
 
@@ -166,6 +168,10 @@ function App() {
 
           {tabValue === 1 && (
             <Reports />
+          )}
+
+          {tabValue === 2 && (
+            <Lawyers />
           )}
         </Container>
 

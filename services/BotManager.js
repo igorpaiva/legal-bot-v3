@@ -102,7 +102,7 @@ export class BotManager {
         lastMessageTimes: new Map(), // Track user message timing for spam prevention
         error: null,
         isRestoring: true, // Flag to indicate this is a restoration
-        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana'), // Pass assistant name
+        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this), // Pass assistant name and botManager
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
         audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
@@ -201,7 +201,7 @@ export class BotManager {
       chatCooldowns: new Map(), // Track last response time per chat to prevent spam
       lastMessageTimes: new Map(), // Track user message timing for spam prevention
       cooldownWarnings: new Map(), // Track cooldown warning messages to prevent spam
-      conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName), // Pass assistant name to conversation service
+      conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName, this), // Pass assistant name and botManager to conversation service
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
       audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service

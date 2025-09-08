@@ -53,11 +53,8 @@ interface ConversationData {
   };
   state: string;
   startTime: string;
-  lastActivity: string;
-  urgency?: string;
-  botId: string;
-  botName: string;
   triageAnalysis?: any;
+  botName: string;
 }
 
 interface ReportsProps {}
@@ -90,12 +87,10 @@ const Reports: React.FC<ReportsProps> = () => {
   const generateMockData = (): ConversationData[] => {
     const mockConversations: ConversationData[] = [];
     const names = ['Maria Silva', 'João Santos', 'Ana Costa', 'Pedro Oliveira', 'Carla Mendes', 'Paulo Lima', 'Fernanda Rocha', 'Ricardo Almeida'];
-    const urgencies = ['alta', 'media', 'baixa'];
     const states = ['COMPLETED', 'ANALYZING_CASE', 'COLLECTING_DETAILS', 'AWAITING_LAWYER'];
     
     for (let i = 0; i < 50; i++) {
       const randomName = names[Math.floor(Math.random() * names.length)];
-      const randomUrgency = urgencies[Math.floor(Math.random() * urgencies.length)];
       const randomState = states[Math.floor(Math.random() * states.length)];
       const randomLegalField = legalFields[Math.floor(Math.random() * legalFields.length)];
       
@@ -108,15 +103,11 @@ const Reports: React.FC<ReportsProps> = () => {
         },
         state: randomState,
         startTime: new Date(Date.now() - Math.floor(Math.random() * 30) * 24 * 60 * 60 * 1000).toISOString(),
-        lastActivity: new Date(Date.now() - Math.floor(Math.random() * 24) * 60 * 60 * 1000).toISOString(),
-        urgency: randomUrgency,
-        botId: 'bot-1',
         botName: 'Legal Bot',
         triageAnalysis: {
           case: {
             category: randomLegalField,
-            description: `Consulta sobre ${randomLegalField.toLowerCase()}`,
-            urgency: randomUrgency
+            description: `Consulta sobre ${randomLegalField.toLowerCase()}`
           }
         }
       });
@@ -163,15 +154,6 @@ const Reports: React.FC<ReportsProps> = () => {
     setSelectedConversation(null);
   };
 
-  const getUrgencyColor = (urgency: string) => {
-    switch (urgency) {
-      case 'alta': return 'error';
-      case 'media': return 'warning';
-      case 'baixa': return 'success';
-      default: return 'default';
-    }
-  };
-
   const getStateLabel = (state: string) => {
     const stateLabels: { [key: string]: string } = {
       'GREETING': 'Saudação',
@@ -192,13 +174,12 @@ const Reports: React.FC<ReportsProps> = () => {
 
   const exportReport = () => {
     const csvContent = [
-      ['Data', 'Cliente', 'Telefone', 'Estado', 'Urgência', 'Área Jurídica', 'Bot'].join(','),
+      ['Data', 'Cliente', 'Telefone', 'Estado', 'Área Jurídica', 'Bot'].join(','),
       ...filteredConversations.map(conv => [
         formatDate(conv.startTime),
         conv.client.name || 'N/A',
         conv.client.phone,
         getStateLabel(conv.state),
-        conv.urgency || 'N/A',
         conv.triageAnalysis?.case?.category || 'Outros',
         conv.botName
       ].join(','))
@@ -362,16 +343,6 @@ const Reports: React.FC<ReportsProps> = () => {
         <Card>
           <CardContent>
             <Typography color="textSecondary" gutterBottom>
-              Urgência Alta
-            </Typography>
-            <Typography variant="h4" color="error">
-              {filteredConversations.filter(c => c.urgency === 'alta').length}
-            </Typography>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
               Em Andamento
             </Typography>
             <Typography variant="h4" color="warning.main">
@@ -449,7 +420,6 @@ const Reports: React.FC<ReportsProps> = () => {
                 <TableCell>Cliente</TableCell>
                 <TableCell>Telefone</TableCell>
                 <TableCell>Estado</TableCell>
-                <TableCell>Urgência</TableCell>
                 <TableCell>Área Jurídica</TableCell>
                 <TableCell>Bot</TableCell>
                 <TableCell>Ações</TableCell>
@@ -472,13 +442,6 @@ const Reports: React.FC<ReportsProps> = () => {
                       label={getStateLabel(conversation.state)}
                       size="small"
                       variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Chip 
-                      label={conversation.urgency || 'N/A'}
-                      color={getUrgencyColor(conversation.urgency || '')}
-                      size="small"
                     />
                   </TableCell>
                   <TableCell>
@@ -563,14 +526,6 @@ const Reports: React.FC<ReportsProps> = () => {
                           <Typography variant="body1" gutterBottom>
                             {selectedConversation.triageAnalysis.case?.category || 'N/A'}
                           </Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="subtitle2" color="textSecondary">Urgência</Typography>
-                          <Chip 
-                            label={selectedConversation.triageAnalysis.case?.urgency || 'N/A'} 
-                            color={selectedConversation.triageAnalysis.case?.urgency === 'alta' ? 'error' : 'default'}
-                            size="small"
-                          />
                         </Box>
                         <Box>
                           <Typography variant="subtitle2" color="textSecondary">Data do Caso</Typography>
@@ -754,7 +709,6 @@ const Reports: React.FC<ReportsProps> = () => {
                 </AccordionSummary>
                 <AccordionDetails>
                   <Typography><strong>Início:</strong> {formatDate(selectedConversation.startTime)}</Typography>
-                  <Typography><strong>Última Atividade:</strong> {formatDate(selectedConversation.lastActivity)}</Typography>
                   <Typography><strong>Bot:</strong> {selectedConversation.botName}</Typography>
                 </AccordionDetails>
               </Accordion>

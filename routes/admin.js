@@ -217,11 +217,8 @@ router.get('/triages', (req, res) => {
       }
     }
 
-    // Sort by urgency and start time
+    // Sort by start time (newest first)
     allConversations.sort((a, b) => {
-      const urgencyOrder = { 'alta': 3, 'media': 2, 'baixa': 1 };
-      const urgencyDiff = urgencyOrder[b.urgency || 'baixa'] - urgencyOrder[a.urgency || 'baixa'];
-      if (urgencyDiff !== 0) return urgencyDiff;
       return new Date(b.startTime) - new Date(a.startTime);
     });
 
@@ -230,11 +227,13 @@ router.get('/triages', (req, res) => {
       triages: allConversations,
       stats: {
         total: allConversations.length,
-        alta: allConversations.filter(t => t.urgency === 'alta').length,
-        media: allConversations.filter(t => t.urgency === 'media').length,
-        baixa: allConversations.filter(t => t.urgency === 'baixa').length,
         byState: allConversations.reduce((acc, t) => {
           acc[t.state] = (acc[t.state] || 0) + 1;
+          return acc;
+        }, {}),
+        byCategory: allConversations.reduce((acc, t) => {
+          const category = t.triageAnalysis?.case?.category || 'Outros';
+          acc[category] = (acc[category] || 0) + 1;
           return acc;
         }, {})
       }

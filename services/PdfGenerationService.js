@@ -165,21 +165,6 @@ class PdfGenerationService {
           overflow-wrap: break-word;
         }
         
-        .urgency-alta {
-          background: #ffebee;
-          border-left: 4px solid #f44336;
-        }
-        
-        .urgency-media {
-          background: #fff3e0;
-          border-left: 4px solid #ff9800;
-        }
-        
-        .urgency-baixa {
-          background: #e8f5e8;
-          border-left: 4px solid #4caf50;
-        }
-        
         .footer {
           position: fixed;
           bottom: 1cm;
@@ -264,11 +249,6 @@ class PdfGenerationService {
           ${analysis.case?.category ? `
           <div class="info-item">
             <strong>Categoria:</strong> ${this.escapeHtml(analysis.case.category)}
-          </div>
-          ` : ''}
-          ${analysis.case?.urgency ? `
-          <div class="info-item urgency-${analysis.case.urgency}">
-            <strong>Urgência:</strong> ${this.escapeHtml(analysis.case.urgency.toUpperCase())}
           </div>
           ` : ''}
           ${analysis.case?.date ? `
@@ -532,18 +512,6 @@ class PdfGenerationService {
           background-color: #f9f9f9;
         }
         
-        .urgency-alta {
-          background: #ffebee !important;
-        }
-        
-        .urgency-media {
-          background: #fff3e0 !important;
-        }
-        
-        .urgency-baixa {
-          background: #e8f5e8 !important;
-        }
-        
         .footer {
           position: fixed;
           bottom: 1cm;
@@ -571,16 +539,16 @@ class PdfGenerationService {
             <div class="stat-label">Total de Conversas</div>
           </div>
           <div class="stat-item">
-            <div class="stat-number">${conversations.filter(c => c.urgency === 'alta').length}</div>
-            <div class="stat-label">Urgência Alta</div>
-          </div>
-          <div class="stat-item">
             <div class="stat-number">${conversations.filter(c => c.state !== 'COMPLETED').length}</div>
             <div class="stat-label">Em Andamento</div>
           </div>
           <div class="stat-item">
             <div class="stat-number">${conversations.filter(c => c.state === 'COMPLETED').length}</div>
             <div class="stat-label">Concluídas</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number">${new Set(conversations.map(c => c.triageAnalysis?.case?.category).filter(Boolean)).size}</div>
+            <div class="stat-label">Áreas Jurídicas</div>
           </div>
         </div>
       </div>
@@ -593,18 +561,16 @@ class PdfGenerationService {
               <th>Cliente</th>
               <th>WhatsApp</th>
               <th>Categoria</th>
-              <th>Urgência</th>
               <th>Estado</th>
               <th>Data</th>
             </tr>
           </thead>
           <tbody>
             ${conversations.map(conv => `
-            <tr class="urgency-${conv.triageAnalysis?.case?.urgency || 'baixa'}">
+            <tr>
               <td>${conv.client.name || 'N/A'}</td>
               <td>${conv.client.phone}</td>
               <td>${conv.triageAnalysis?.case?.category || 'N/A'}</td>
-              <td>${conv.triageAnalysis?.case?.urgency || 'N/A'}</td>
               <td>${this.getStateLabel(conv.state)}</td>
               <td>${new Date(conv.startTime || conv.startedAt).toLocaleDateString('pt-BR')}</td>
             </tr>

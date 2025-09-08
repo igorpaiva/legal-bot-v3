@@ -1,12 +1,14 @@
 import fs from 'fs/promises';
 import path from 'path';
 import LegalFieldQuestionsService from './LegalFieldQuestionsService.js';
+import LawyerNotificationService from './LawyerNotificationService.js';
 
 export class ConversationFlowService {
-  constructor(groqService, triageService, assistantName = 'Ana') {
+  constructor(groqService, triageService, assistantName = 'Ana', botManager = null) {
     this.groqService = groqService;
     this.triageService = triageService;
     this.assistantName = assistantName; // Store the assistant name
+    this.botManager = botManager; // Store botManager reference for lawyer notifications
     this.conversations = new Map();
     this.clients = new Map();
     this.messages = new Map();
@@ -1495,18 +1497,24 @@ Responda APENAS com sua mensagem:`;
       // All strategic questions completed
       conversation.state = 'AWAITING_COMPLEMENT';
       
-      const firstName = client.name?.split(' ')[0] || 'cliente';
-      const thankYouMessage = `Perfeito, ${firstName}! Agora tenho todas as informações específicas necessárias para que nosso advogado especialista possa analisar seu caso da melhor forma.`;
+      // Send PDF notification to lawyer if botManager is available
+      console.log(`[DEBUG] handleStrategicInfoCollection - botManager available: ${!!this.botManager}`);
+      console.log(`[DEBUG] handleStrategicInfoCollection - conversation.analysis available: ${!!conversation.analysis}`);
+      console.log(`[DEBUG] handleStrategicInfoCollection - legal field: ${conversation.analysis?.case?.category}`);
       
-      // Return thank you message and then offer complement option
-      setTimeout(async () => {
-        if (this.sendResponseCallback) {
-          const complementOffer = await this.offerComplementOption(conversation);
-          await this.sendResponseCallback(complementOffer);
+      if (this.botManager && conversation.analysis) {
+        try {
+          console.log(`Strategic info collection completed for ${conversation.client.name || conversation.client.phone}. Sending notification to lawyer...`);
+          await LawyerNotificationService.notifyLawyerCaseCompleted(this.botManager, conversation);
+        } catch (error) {
+          console.error('Error sending lawyer notification from strategic info collection:', error);
         }
-      }, 2000);
+      } else {
+        console.log(`[DEBUG] Lawyer notification not sent from strategic info - botManager: ${!!this.botManager}, analysis: ${!!conversation.analysis}`);
+      }
       
-      return thankYouMessage;
+      // Go directly to complement option without intermediate message
+      return await this.offerComplementOption(conversation);
     }
   }
 
@@ -1663,7 +1671,25 @@ FORMATO: Fale como uma pessoa real e empática, não como um robô. Demonstre qu
 
 Responda APENAS com sua mensagem:`;
 
-    return await this.groqService.generateResponse(completionPrompt);
+    const response = await this.groqService.generateResponse(completionPrompt);
+
+    // Send PDF notification to lawyer if botManager is available
+    console.log(`[DEBUG] completeTriageWithEmpathy - botManager available: ${!!this.botManager}`);
+    console.log(`[DEBUG] completeTriageWithEmpathy - conversation.analysis available: ${!!conversation.analysis}`);
+    console.log(`[DEBUG] completeTriageWithEmpathy - legal field: ${conversation.analysis?.case?.category}`);
+    
+    if (this.botManager && conversation.analysis) {
+      try {
+        console.log(`Case completed for ${conversation.client.name || conversation.client.phone}. Sending notification to lawyer...`);
+        await LawyerNotificationService.notifyLawyerCaseCompleted(this.botManager, conversation);
+      } catch (error) {
+        console.error('Error sending lawyer notification:', error);
+      }
+    } else {
+      console.log(`[DEBUG] Lawyer notification not sent - botManager: ${!!this.botManager}, analysis: ${!!conversation.analysis}`);
+    }
+
+    return response;
   }
 
 }

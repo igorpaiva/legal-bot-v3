@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import botRoutes from './routes/bot.js';
 import adminRoutes from './routes/admin.js';
 import pdfRoutes from './routes/pdf.js';
+import lawyersRoutes from './routes/lawyers.js';
 import { BotManager } from './services/BotManager.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -62,6 +63,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Other routes
 app.use('/api/bot', botRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/lawyers', lawyersRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
