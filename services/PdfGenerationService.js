@@ -7,11 +7,36 @@ class PdfGenerationService {
   }
 
   async initialize() {
-    if (!this.browser) {
+    try {
+      // Check if browser exists and is connected
+      if (this.browser && this.browser.isConnected()) {
+        return;
+      }
+      
+      // Close any existing browser instance
+      if (this.browser) {
+        try {
+          await this.browser.close();
+        } catch (error) {
+          console.log('Error closing existing browser:', error.message);
+        }
+      }
+      
+      // Create new browser instance
       this.browser = await puppeteer.launch({
         headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+          '--no-sandbox', 
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu'
+        ]
       });
+      
+      console.log('Puppeteer browser initialized successfully');
+    } catch (error) {
+      console.error('Error initializing Puppeteer browser:', error);
+      throw error;
     }
   }
 
@@ -565,49 +590,113 @@ class PdfGenerationService {
   }
 
   async generateConversationPdf(conversation) {
-    await this.initialize();
+    let page = null;
+    let retries = 2;
     
-    const page = await this.browser.newPage();
-    const html = this.generateConversationHtml(conversation);
-    
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    
-    const pdf = await page.pdf({
-      format: 'A4',
-      margin: {
-        top: '2cm',
-        right: '2cm',
-        bottom: '2cm',
-        left: '2cm'
-      },
-      printBackground: true
-    });
-    
-    await page.close();
-    return pdf;
+    while (retries > 0) {
+      try {
+        await this.initialize();
+        
+        page = await this.browser.newPage();
+        const html = this.generateConversationHtml(conversation);
+        
+        await page.setContent(html, { waitUntil: 'networkidle0' });
+        
+        const pdf = await page.pdf({
+          format: 'A4',
+          margin: {
+            top: '2cm',
+            right: '2cm',
+            bottom: '2cm',
+            left: '2cm'
+          },
+          printBackground: true
+        });
+        
+        await page.close();
+        return pdf;
+        
+      } catch (error) {
+        console.error(`Error generating conversation PDF (attempt ${3 - retries}):`, error.message);
+        
+        // Clean up page if it exists
+        if (page) {
+          try {
+            await page.close();
+          } catch (closeError) {
+            console.log('Error closing page:', closeError.message);
+          }
+        }
+        
+        // Force browser reconnection on connection errors
+        if (error.message.includes('Connection closed') || error.message.includes('Target closed')) {
+          this.browser = null;
+        }
+        
+        retries--;
+        if (retries === 0) {
+          throw error;
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
   }
 
   async generateSummaryPdf(conversations) {
-    await this.initialize();
+    let page = null;
+    let retries = 2;
     
-    const page = await this.browser.newPage();
-    const html = this.generateSummaryHtml(conversations);
-    
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    
-    const pdf = await page.pdf({
-      format: 'A4',
-      margin: {
-        top: '2cm',
-        right: '2cm',
-        bottom: '2cm',
-        left: '2cm'
-      },
-      printBackground: true
-    });
-    
-    await page.close();
-    return pdf;
+    while (retries > 0) {
+      try {
+        await this.initialize();
+        
+        page = await this.browser.newPage();
+        const html = this.generateSummaryHtml(conversations);
+        
+        await page.setContent(html, { waitUntil: 'networkidle0' });
+        
+        const pdf = await page.pdf({
+          format: 'A4',
+          margin: {
+            top: '2cm',
+            right: '2cm',
+            bottom: '2cm',
+            left: '2cm'
+          },
+          printBackground: true
+        });
+        
+        await page.close();
+        return pdf;
+        
+      } catch (error) {
+        console.error(`Error generating summary PDF (attempt ${3 - retries}):`, error.message);
+        
+        // Clean up page if it exists
+        if (page) {
+          try {
+            await page.close();
+          } catch (closeError) {
+            console.log('Error closing page:', closeError.message);
+          }
+        }
+        
+        // Force browser reconnection on connection errors
+        if (error.message.includes('Connection closed') || error.message.includes('Target closed')) {
+          this.browser = null;
+        }
+        
+        retries--;
+        if (retries === 0) {
+          throw error;
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
   }
 }
 
