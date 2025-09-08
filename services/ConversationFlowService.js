@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import LegalFieldQuestionsService from './LegalFieldQuestionsService.js';
 
 export class ConversationFlowService {
   constructor(groqService, triageService, assistantName = 'Ana') {
@@ -12,9 +13,41 @@ export class ConversationFlowService {
     this.conversationIdCounter = 1;
     this.messageIdCounter = 1;
     this.pendingRetries = new Map(); // Track pending retries
+    this.pendingMessages = new Map(); // Track pending message bursts
+    this.messageTimeouts = new Map(); // Track message timeouts
+    this.sendResponseCallback = null; // Callback for sending responses in burst mode
+    this.legalFieldQuestionsService = new LegalFieldQuestionsService(); // Strategic questions service
+    this.messageTiming = new Map(); // Track message timing patterns
+    this.typingDetection = new Map(); // Track typing patterns
     
     // Load persisted data
     this.loadConversations();
+    
+    // Clean up old timing data periodically
+    setInterval(() => {
+      this.cleanupOldTimingData();
+    }, 300000); // Every 5 minutes
+  }
+
+  cleanupOldTimingData() {
+    const fiveMinutesAgo = Date.now() - 300000;
+    
+    for (const [clientPhone, timingHistory] of this.messageTiming.entries()) {
+      // Remove messages older than 5 minutes
+      const recentMessages = timingHistory.filter(msg => msg.timestamp > fiveMinutesAgo);
+      
+      if (recentMessages.length === 0) {
+        this.messageTiming.delete(clientPhone);
+        this.typingDetection.delete(clientPhone);
+      } else {
+        this.messageTiming.set(clientPhone, recentMessages);
+      }
+    }
+  }
+
+  // Method to set the response callback for message bursts
+  setSendResponseCallback(callback) {
+    this.sendResponseCallback = callback;
   }
 
   async processIncomingMessage(phone, messageText, originalPhoneForReply = null) {
@@ -23,6 +56,12 @@ export class ConversationFlowService {
     try {
       const client = this.findOrCreateClient(phone);
       const conversation = this.findOrCreateActiveConversation(client);
+      
+      // Handle message bursts - wait for client to finish typing
+      if (this.shouldWaitForMoreMessages(conversation, messageText)) {
+        return await this.handleMessageBurst(phone, messageText, originalPhoneForReply, client, conversation, this.sendResponseCallback);
+      }
+      
       this.saveIncomingMessage(conversation, messageText);
 
       // Get response based on conversation state
@@ -113,6 +152,167 @@ export class ConversationFlowService {
     return conversation;
   }
 
+  shouldWaitForMoreMessages(conversation, messageText) {
+    // Don't wait for bursts in certain states where single responses are expected
+    const singleResponseStates = ['COLLECTING_NAME', 'COLLECTING_EMAIL', 'COLLECTING_STRATEGIC_INFO'];
+    if (singleResponseStates.includes(conversation.state)) {
+      return false;
+    }
+
+    // Wait for bursts in states where detailed information is expected
+    const burstStates = ['GREETING', 'ANALYZING_CASE', 'COLLECTING_DETAILS', 'AWAITING_COMPLEMENT'];
+    if (!burstStates.includes(conversation.state)) {
+      return false;
+    }
+
+    // Smart analysis: Don't wait if message seems complete and substantial
+    const text = messageText.trim();
+    
+    // If message is long and ends with proper punctuation, likely complete
+    if (text.length > 200 && /[.!?]$/.test(text)) {
+      console.log(`[BURST] Long complete message, not waiting: ${text.length} chars`);
+      return false;
+    }
+    
+    // If message is very short, likely more coming
+    if (text.length < 50) {
+      console.log(`[BURST] Short message, waiting for more: "${text}"`);
+      return true;
+    }
+    
+    // Check for incomplete patterns
+    const seemsIncomplete = this.seemsIncomplete(text);
+    if (seemsIncomplete) {
+      console.log(`[BURST] Message seems incomplete, waiting: "${text}"`);
+      return true;
+    }
+    
+    // Medium length messages without punctuation
+    if (text.length < 150 && !/[.!?]$/.test(text)) {
+      console.log(`[BURST] Medium message without punctuation, waiting: "${text}"`);
+      return true;
+    }
+    
+    // Default: don't wait for seemingly complete messages
+    console.log(`[BURST] Message seems complete, not waiting: "${text}"`);
+    return false;
+  }
+
+  seemsIncomplete(text) {
+    const trimmed = text.trim().toLowerCase();
+    
+    // Common incomplete patterns
+    const incompletePatterns = [
+      /^(e|mas|porque|então|aí|daí|tipo|só|ainda|também|além|inclusive)\s/,
+      /\s(e|mas|porque|então|aí|daí|tipo|só|ainda|também)$/,
+      /,$/,        // ends with comma
+      /:\s*$/,     // ends with colon
+      /\.\.\./,    // contains ellipsis
+      /\s-\s*$/,   // ends with dash
+      /\se\s*$/,   // ends with "e"
+    ];
+    
+    return incompletePatterns.some(pattern => pattern.test(trimmed));
+  }
+
+  async handleMessageBurst(phone, messageText, originalPhoneForReply, client, conversation, sendResponseCallback = null) {
+    const burstKey = `${phone}_${conversation.id}`;
+    
+    // Clear any existing timeout for this conversation
+    if (this.messageTimeouts.has(burstKey)) {
+      clearTimeout(this.messageTimeouts.get(burstKey));
+    }
+
+    // Initialize or update pending messages
+    if (!this.pendingMessages.has(burstKey)) {
+      this.pendingMessages.set(burstKey, []);
+    }
+    
+    // Add current message to pending messages
+    this.pendingMessages.get(burstKey).push(messageText);
+    
+    // Calculate dynamic timeout based on patterns
+    const timeout = this.calculateDynamicTimeout(conversation, messageText);
+    
+    console.log(`[BURST] Added message to burst for ${phone}: "${messageText}". Using ${timeout}ms timeout. Queue: ${this.pendingMessages.get(burstKey).length} messages`);
+    
+    // Set a timeout to process all messages after calculated delay
+    const timeoutId = setTimeout(async () => {
+      try {
+        console.log(`[BURST] Processing burst for ${phone} after ${timeout}ms timeout`);
+        
+        const allMessages = this.pendingMessages.get(burstKey) || [];
+        const combinedMessage = allMessages.join('\n\n');
+        
+        // Clean up
+        this.pendingMessages.delete(burstKey);
+        this.messageTimeouts.delete(burstKey);
+        
+        // Process the combined message
+        this.saveIncomingMessage(conversation, combinedMessage);
+        const response = await this.processConversationState(conversation, combinedMessage, client);
+        
+        if (response && response.trim()) {
+          this.saveOutgoingMessage(conversation, response);
+          
+          // Use callback to send response if provided
+          if (sendResponseCallback) {
+            await sendResponseCallback(response);
+          } else {
+            console.log(`[BURST] Would send response: ${response}`);
+          }
+        }
+        
+        conversation.lastActivityAt = new Date();
+        this.saveConversations();
+        
+      } catch (error) {
+        console.error('[BURST] Error processing message burst:', error);
+      }
+    }, timeout);
+    
+    this.messageTimeouts.set(burstKey, timeoutId);
+    
+    // Return null to indicate we're waiting for more messages
+    return null;
+  }
+
+  calculateDynamicTimeout(conversation, messageText) {
+    const text = messageText.trim();
+    
+    // Base timeout
+    let timeout = 15000; // 15 seconds default
+    
+    // Shorter timeout for very short messages (likely quick follow-ups)
+    if (text.length < 30) {
+      timeout = 8000; // 8 seconds for very short
+    }
+    // Medium timeout for medium messages
+    else if (text.length < 100) {
+      timeout = 12000; // 12 seconds for medium
+    }
+    // Longer timeout for longer messages (user might be typing more)
+    else if (text.length > 200) {
+      timeout = 20000; // 20 seconds for long messages
+    }
+    
+    // Extra time if message seems incomplete
+    if (this.seemsIncomplete(text)) {
+      timeout += 5000; // Extra 5 seconds for incomplete
+    }
+    
+    // Extra time for case analysis states (more complex thinking)
+    if (conversation.state === 'ANALYZING_CASE' || conversation.state === 'COLLECTING_DETAILS') {
+      timeout += 3000; // Extra 3 seconds for complex states
+    }
+    
+    // Bounds: between 8-25 seconds
+    timeout = Math.max(8000, Math.min(timeout, 25000));
+    
+    console.log(`[BURST] Dynamic timeout: ${timeout}ms for message length: ${text.length}, incomplete: ${this.seemsIncomplete(text)}`);
+    return timeout;
+  }
+
   async processConversationState(conversation, messageText, client) {
     const state = conversation.state;
     console.log(`[DEBUG] processConversationState - Conversation ID: ${conversation.id}, State: ${state}, Client: ${client.phone}, Message: "${messageText}"`);
@@ -126,14 +326,16 @@ export class ConversationFlowService {
         return this.handleEmailCollection(conversation, messageText, client);
       case 'ANALYZING_CASE':
         return await this.handleCaseAnalysis(conversation, messageText, client);
+      case 'COLLECTING_STRATEGIC_INFO':
+        return await this.handleStrategicInfoCollection(conversation, messageText, client);
       case 'COLLECTING_DETAILS':
         return await this.handleDetailCollection(conversation, messageText, client);
       case 'COLLECTING_DOCUMENTS':
         return await this.handleDocumentCollection(conversation, messageText, client);
       case 'AWAITING_LAWYER':
         return await this.handleAwaitingLawyer(conversation, messageText, client);
-      case 'AWAITING_PREANALYSIS_DECISION':
-        return await this.handlePreAnalysisDecision(conversation, messageText, client);
+      case 'AWAITING_COMPLEMENT':
+        return await this.handleComplementCollection(conversation, messageText, client);
       default:
         return await this.handleGreeting(conversation, messageText, client);
     }
@@ -209,7 +411,7 @@ Responda APENAS com sua mensagem:`;
     conversation.state = 'COLLECTING_NAME';
     
     // Let AI generate a completely natural greeting
-    const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare. 
+    const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório V3. 
     
 Um cliente acabou de entrar em contato via WhatsApp pela primeira vez.
 
@@ -226,6 +428,25 @@ INSTRUÇÕES:
 Responda APENAS com sua mensagem em português:`;
 
     return await this.groqService.generateResponse(greetingPrompt);
+  }
+
+  detectCaseDetailsInMessage(messageText) {
+    // Check if the message contains case-related keywords and is long enough to be case details
+    const caseKeywords = [
+      'empresa', 'trabalho', 'emprego', 'demissão', 'salário', 'contrato', 'processo',
+      'tribunal', 'advogado', 'direito', 'lei', 'acidente', 'indenização', 'dano',
+      'separação', 'divórcio', 'filho', 'pensão', 'herança', 'inventário',
+      'cobrança', 'dívida', 'documento', 'cnpj', 'cpf', 'registro',
+      'problema', 'situação', 'caso', 'questão', 'dúvida', 'ajuda',
+      'atestado', 'cid', 'cat', 'inss', 'afastado', 'burnout', 'doença',
+      'rescisão', 'justa causa', 'banco', 'cartão', 'crédito'
+    ];
+    
+    const lowerText = messageText.toLowerCase();
+    const hasKeywords = caseKeywords.some(keyword => lowerText.includes(keyword));
+    const isLongEnough = messageText.length > 50; // More than 50 characters suggests details
+    
+    return hasKeywords && isLongEnough;
   }
 
   async handleNameCollection(conversation, messageText, client) {
@@ -256,6 +477,16 @@ Responda APENAS com sua mensagem:`;
       return await this.groqService.generateResponse(emailPrompt);
     }
     
+    // Check if this message contains case details even though we're collecting names
+    if (this.detectCaseDetailsInMessage(messageText)) {
+      // Store the case details for later use
+      if (!conversation.earlyCaseDetails) {
+        conversation.earlyCaseDetails = [];
+      }
+      conversation.earlyCaseDetails.push(messageText);
+      console.log(`[DEBUG] handleNameCollection - Detected case details in message, stored for later`);
+    }
+
     const name = this.extractName(messageText);
     console.log(`[DEBUG] handleNameCollection - Extracted name: "${name}"`);
     
@@ -269,8 +500,23 @@ Responda APENAS com sua mensagem:`;
       
       const firstName = name.split(' ')[0];
       
-      // Let AI generate natural response asking for email
-      const emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}".
+      // If case details were provided, acknowledge them while asking for email
+      let emailPrompt;
+      if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+        emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}" e também compartilhou detalhes sobre sua situação.
+
+SITUAÇÃO: O cliente forneceu nome E informações sobre o caso. Agora você precisa do email.
+
+INSTRUÇÕES:
+- Reconheça o nome de forma calorosa (use "${firstName}")
+- Demonstre que você ouviu sobre a situação (seja empática)
+- Peça o email para prosseguir com o atendimento
+- Explique que com o email poderão enviar atualizações
+- Seja conversacional e empática
+
+Responda APENAS com sua mensagem:`;
+      } else {
+        emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}".
 
 SITUAÇÃO: Agora você precisa do email da pessoa para enviar atualizações sobre o caso.
 
@@ -281,6 +527,7 @@ INSTRUÇÕES:
 - Seja conversacional, não robotizada
 
 Responda APENAS com sua mensagem:`;
+      }
 
       return await this.groqService.generateResponse(emailPrompt);
     } else {
@@ -311,10 +558,27 @@ Responda APENAS com sua mensagem:`;
     console.log(`[DEBUG] handleEmailCollection - Input: "${messageText}"`);
     console.log(`[DEBUG] handleEmailCollection - Current client email: "${client.email}"`);
     
+    // Check if this message contains case details even though we're collecting email
+    if (this.detectCaseDetailsInMessage(messageText)) {
+      // Store the case details for later use
+      if (!conversation.earlyCaseDetails) {
+        conversation.earlyCaseDetails = [];
+      }
+      conversation.earlyCaseDetails.push(messageText);
+      console.log(`[DEBUG] handleEmailCollection - Detected case details in message, stored for later`);
+    }
+    
     // If client already has an email and they're just providing it again or giving details, skip to case analysis
     if (client.email && client.email.includes('@')) {
       console.log(`[DEBUG] handleEmailCollection - Client already has email, moving to case analysis`);
       conversation.state = 'ANALYZING_CASE';
+      
+      // Check if we have early case details to use
+      if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+        // Process the case with existing details
+        console.log(`[DEBUG] handleEmailCollection - Found early case details, processing directly`);
+        return await this.handleCaseAnalysis(conversation, conversation.earlyCaseDetails.join('\n'), client);
+      }
       
       // AI generates natural transition to case discussion
       const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) já forneceu o email "${client.email}".
@@ -343,6 +607,12 @@ Responda APENAS com sua mensagem:`;
       conversation.state = 'ANALYZING_CASE';
       console.log(`[DEBUG] handleEmailCollection - Updated state to: "${conversation.state}"`);
       console.log(`[DEBUG] handleEmailCollection - Updated client email to: "${client.email}"`);
+      
+      // Check if we have early case details to use immediately
+      if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+        console.log(`[DEBUG] handleEmailCollection - Found early case details, processing directly`);
+        return await this.handleCaseAnalysis(conversation, conversation.earlyCaseDetails.join('\n'), client);
+      }
       
       // AI generates natural transition to case discussion
       const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) acabou de fornecer o email "${email}".
@@ -390,10 +660,20 @@ Responda APENAS com sua mensagem:`;
       conversation.conversationHistory = [];
     }
     
+    // Combine early case details with current message if available
+    let fullCaseText = messageText;
+    if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+      // Prepend early case details to current message
+      fullCaseText = conversation.earlyCaseDetails.join('\n') + '\n' + messageText;
+      console.log(`[DEBUG] handleCaseAnalysis - Combined early case details with current message`);
+      // Clear early case details as they've been processed
+      conversation.earlyCaseDetails = [];
+    }
+    
     // Acumula informações sobre o caso
     conversation.conversationHistory.push({
       role: 'user',
-      content: messageText,
+      content: fullCaseText,
       timestamp: new Date().toISOString()
     });
     
@@ -411,13 +691,13 @@ Responda APENAS com sua mensagem:`;
     
     // Se ainda não fez análise inicial ou precisa de mais informações
     if (!conversation.needsMoreInfo) {
-      const analysis = await this.triageService.triageFromText(messageText, client.phone, this.groqService);
+      const analysis = await this.triageService.triageFromText(fullCaseText, client.phone, this.groqService);
       conversation.analysis = analysis;
       
       // AI decides if more information is needed
       const analysisPrompt = `Você é ${this.assistantName}, assistente jurídica especializada. O cliente ${client.name} contou sobre a situação:
 
-"${messageText}"
+"${fullCaseText}"
 
 ANÁLISE TÉCNICA:
 - Área: ${analysis?.case?.category || 'Não identificada'}
@@ -427,21 +707,21 @@ ANÁLISE TÉCNICA:
 
 AVALIAÇÃO DE COMPLETUDE:
 Verifique se a mensagem contém:
-- ✓ Situação claramente descrita com contexto completo (datas, pessoas, eventos)
-- ✓ Problema jurídico específico identificado
-- ✓ Consequências ou danos mencionados
-- ✓ Cronologia dos fatos apresentada
+- ✓ Situação claramente descrita com contexto (o que aconteceu?)
+- ✓ Problema jurídico identificado
+- ✓ Alguma informação temporal ou consequências
 
-REGRA IMPORTANTE: Se a mensagem for LONGA (mais de 300 caracteres) e DETALHADA com cronologia clara, geralmente JÁ CONTÉM informações suficientes.
+REGRA CONSERVADORA: Se há um relato coerente da situação jurídica (mesmo que resumido), PREFIRA FINALIZAR. O cliente poderá complementar depois se quiser.
 
 TAREFA: Decidir se você precisa de mais informações ou se pode finalizar o atendimento.
 
-Se PRECISAR de mais informações (apenas se faltarem elementos essenciais):
-- Use apenas "entendi" ou "compreendo" para reconhecer a situação
-- Faça UMA pergunta específica sobre o que realmente falta
-- Seja objetiva (máximo 1 frase de pergunta)
+Se PRECISAR de mais informações (apenas se a situação estiver muito vaga ou confusa):
+- Demonstre empatia e compreensão pela situação difícil
+- Use "entendi" ou "compreendo" para reconhecer o que foi compartilhado
+- Faça UMA pergunta específica e essencial, mas com sensibilidade
+- Seja calorosa e acolhedora (máximo 2 frases)
 
-Se TIVER informações SUFICIENTES (caso detalhado com cronologia):
+Se TIVER informações SUFICIENTES (relato coerente da situação jurídica):
 - Comece sua resposta exatamente com "FINALIZAR:"
 - NÃO faça resumo da situação (o cliente já sabe o que aconteceu)
 - Vá direto aos próximos passos
@@ -453,19 +733,58 @@ Responda APENAS com sua mensagem:`;
       const response = await this.groqService.generateResponse(analysisPrompt);
       
       if (response.startsWith('FINALIZAR:')) {
-        conversation.state = 'AWAITING_PREANALYSIS_DECISION';
-        // Save the triage analysis when conversation completes
+        // Check if we need strategic information for this legal field
+        const legalField = conversation.analysis?.case?.category;
+        const fieldInfo = this.legalFieldQuestionsService.getRequiredInfoForField(legalField);
+        
+        // Only collect strategic questions for Trabalhista (worker's law) cases
+        if (legalField === 'Trabalhista' && fieldInfo && fieldInfo.requiredInfo.length > 0) {
+          // Analyze what information we already have vs what we need
+          const analysisResult = this.legalFieldQuestionsService.analyzeProvidedInformation(
+            conversation.conversationHistory || [], 
+            legalField
+          );
+          
+          if (analysisResult.missingInfo.length > 0) {
+            // We have missing strategic information, start collecting it
+            conversation.state = 'COLLECTING_STRATEGIC_INFO';
+            conversation.strategicQuestions = {
+              fieldInfo: fieldInfo,
+              missingInfo: analysisResult.missingInfo,
+              extractedInfo: analysisResult.extractedInfo,
+              currentlyAsking: null
+            };
+            
+            // Save the triage analysis
+            if (conversation.analysis) {
+              this.saveTriageAnalysis(conversation, conversation.analysis);
+            }
+            
+            return await this.askNextStrategicQuestion(conversation, client);
+          } else {
+            // All information already provided, save what we extracted and continue
+            if (!conversation.analysis) {
+              conversation.analysis = {};
+            }
+            
+            conversation.analysis.strategicInfo = {
+              legalField: fieldInfo.displayName,
+              extractedInfo: analysisResult.extractedInfo,
+              extractedAt: new Date().toISOString()
+            };
+          }
+        }
+        
+        // No missing strategic info, offer complement option
+        conversation.state = 'AWAITING_COMPLEMENT';
         if (conversation.analysis) {
           this.saveTriageAnalysis(conversation, conversation.analysis);
         }
         
-        // Store the completion message for later use
-        conversation.completionMessage = response.substring(10).trim();
-        
-        // Ask if client wants pre-analysis
-        return await this.askForPreAnalysis(conversation);
+        return await this.offerComplementOption(conversation);
       } else {
         conversation.needsMoreInfo = true;
+        conversation.waitingForAnswer = true; // Mark that we're waiting for an answer to our question
         return response;
       }
     } else {
@@ -473,7 +792,85 @@ Responda APENAS com sua mensagem:`;
       const conversationMessages = conversation.conversationHistory || [];
       const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
       
-      const followUpPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} deu mais informações:
+      // Check if we were waiting for an answer to a specific question
+      if (conversation.waitingForAnswer) {
+        // We asked a question and now got an answer, process it and likely finalize
+        conversation.waitingForAnswer = false; // Reset the flag
+        
+        const answerProcessingPrompt = `Você é ${this.assistantName}, assistente jurídica empática. Você fez uma pergunta ao cliente ${client.name} e agora recebeu a resposta:
+
+RESPOSTA DO CLIENTE: "${messageText}"
+
+TODAS AS INFORMAÇÕES COLETADAS:
+"${allUserMessages}"
+
+CONTEXTO: Área identificada como ${conversation.analysis?.case?.category || 'Jurídico'}
+
+ANÁLISE EMOCIONAL: Examine se a situação envolve sofrimento emocional, injustiças ou dificuldades pessoais.
+
+TAREFA: Processar a resposta com empatia e finalizar o atendimento.
+
+INSTRUÇÕES:
+- Demonstre empatia e compreensão pela situação
+- Reconheça a resposta com sensibilidade (1-2 frases calorosas)
+- Comece com "FINALIZAR:"
+- NÃO faça resumo da situação
+- Transmita apoio e esperança
+- Explique que um advogado especialista cuidará do caso com dedicação
+- Informe que entrará em contato em breve
+
+Responda APENAS com sua mensagem:`;
+
+        const response = await this.groqService.generateResponse(answerProcessingPrompt);
+        
+        // Should always finalize after getting an answer to our question
+        const legalField = conversation.analysis?.case?.category;
+        const fieldInfo = this.legalFieldQuestionsService.getRequiredInfoForField(legalField);
+        
+        // Only collect strategic questions for Trabalhista (worker's law) cases
+        if (legalField === 'Trabalhista' && fieldInfo && fieldInfo.requiredInfo.length > 0) {
+          // Analyze what information we have vs what we need
+          const analysisResult = this.legalFieldQuestionsService.analyzeProvidedInformation(
+            conversation.conversationHistory || [], 
+            legalField
+          );
+          
+          if (analysisResult.missingInfo.length > 0) {
+            // We have missing strategic information, start collecting it
+            conversation.state = 'COLLECTING_STRATEGIC_INFO';
+            conversation.strategicQuestions = {
+              fieldInfo: fieldInfo,
+              missingInfo: analysisResult.missingInfo,
+              extractedInfo: analysisResult.extractedInfo,
+              currentlyAsking: null
+            };
+            
+            return await this.askNextStrategicQuestion(conversation, client);
+          } else {
+            // All information already provided, save what we extracted
+            if (!conversation.analysis) {
+              conversation.analysis = {};
+            }
+            
+            conversation.analysis.strategicInfo = {
+              legalField: fieldInfo.displayName,
+              extractedInfo: analysisResult.extractedInfo,
+              extractedAt: new Date().toISOString()
+            };
+          }
+        }
+        
+        // No missing strategic info, offer complement option
+        conversation.state = 'AWAITING_COMPLEMENT';
+        if (conversation.analysis) {
+          this.saveTriageAnalysis(conversation, conversation.analysis);
+        }
+        
+        return await this.offerComplementOption(conversation);
+        
+      } else {
+        // Normal follow-up logic for additional information
+        const followUpPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} deu mais informações:
 
 ÚLTIMA MENSAGEM: "${messageText}"
 
@@ -506,22 +903,36 @@ Se TIVER informações SUFICIENTES OU cliente demonstrar frustração:
 
 Responda APENAS com sua mensagem:`;
 
-      const response = await this.groqService.generateResponse(followUpPrompt);
-      
-      if (response.startsWith('FINALIZAR:')) {
-        conversation.state = 'AWAITING_PREANALYSIS_DECISION';
-        // Save the triage analysis when conversation completes
-        if (conversation.analysis) {
-          this.saveTriageAnalysis(conversation, conversation.analysis);
+        const response = await this.groqService.generateResponse(followUpPrompt);
+        
+        if (response.startsWith('FINALIZAR:')) {
+          // Check if we have strategic questions for this legal field (only for Trabalhista)
+          const legalField = conversation.analysis?.case?.category;
+          const fieldQuestions = this.legalFieldQuestionsService.getQuestionsForField(legalField);
+          
+          if (legalField === 'Trabalhista' && fieldQuestions && fieldQuestions.questions.length > 0) {
+            // Move to strategic info collection instead of completing
+            conversation.state = 'COLLECTING_STRATEGIC_INFO';
+            conversation.strategicQuestions = {
+              fieldInfo: fieldQuestions,
+              currentQuestionIndex: 0,
+              collectedAnswers: {}
+            };
+            
+            return await this.askNextStrategicQuestion(conversation, client);
+          } else {
+            // No strategic questions for this field, or not Trabalhista - offer complement option
+            conversation.state = 'AWAITING_COMPLEMENT';
+            if (conversation.analysis) {
+              this.saveTriageAnalysis(conversation, conversation.analysis);
+            }
+            
+            return await this.offerComplementOption(conversation);
+          }
+        } else {
+          conversation.waitingForAnswer = true; // Mark that we're waiting for an answer
+          return response;
         }
-        
-        // Store the completion message for later use
-        conversation.completionMessage = response.substring(10).trim();
-        
-        // Ask if client wants pre-analysis
-        return await this.askForPreAnalysis(conversation);
-      } else {
-        return response;
       }
     }
   }
@@ -990,141 +1401,271 @@ Responda APENAS com sua mensagem:`;
     this.onRetryFailed = onFailed;
   }
 
-  /**
-   * Ask if client wants a pre-analysis of their case
-   */
-  async askForPreAnalysis(conversation) {
-    const preAnalysisPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare.
+  async askNextStrategicQuestion(conversation, client) {
+    const strategicInfo = conversation.strategicQuestions;
+    
+    if (!strategicInfo || !strategicInfo.missingInfo || strategicInfo.missingInfo.length === 0) {
+      // No more questions, move to complement phase
+      conversation.state = 'AWAITING_COMPLEMENT';
+      return await this.offerComplementOption(conversation);
+    }
 
-Você acabou de concluir a triagem inicial de um caso jurídico. Agora deve oferecer uma pré-análise gratuita.
+    // Check if we're already waiting for an answer to a strategic question
+    if (strategicInfo.currentlyAsking) {
+      console.log(`[STRATEGIC] Already waiting for answer to: ${strategicInfo.currentlyAsking.key}`);
+      return null; // Don't ask another question, wait for current answer
+    }
 
-TAREFA: Oferecer uma mini-análise do caso de forma atrativa.
+    // Generate an intelligent question for the next missing information
+    const questionResult = this.legalFieldQuestionsService.generateStrategicQuestion(
+      strategicInfo.missingInfo,
+      strategicInfo.fieldInfo.displayName,
+      client.name,
+      conversation.conversationHistory || []
+    );
 
-INSTRUÇÕES:
-- Explique que pode oferecer uma pré-análise gratuita imediata
-- Mencione que é um mini-diagnóstico com orientações iniciais
-- Pergunte se o cliente gostaria de receber essa análise
-- Seja clara que isso é adicional e gratuito
-- Use linguagem convidativa mas profissional
-- SEMPRE responda em português brasileiro
+    if (!questionResult) {
+      // No more questions to ask
+      conversation.state = 'AWAITING_COMPLEMENT';
+      return await this.offerComplementOption(conversation);
+    }
 
-FORMATO: Responda apenas com sua mensagem direta ao cliente.
+    // Store what we're currently asking about
+    strategicInfo.currentlyAsking = questionResult.info;
+    
+    // Set state to collecting strategic info to ensure we wait for the answer
+    conversation.state = 'COLLECTING_STRATEGIC_INFO';
+    
+    console.log(`[STRATEGIC] Asking question for: ${questionResult.info.key}`);
 
-Responda APENAS com sua mensagem:`;
-
-    return await this.groqService.generateResponse(preAnalysisPrompt);
+    // Generate the actual question using AI
+    const questionText = await this.groqService.generateResponse(questionResult.questionPrompt);
+    
+    return questionText;
   }
 
-  /**
-   * Handle client's decision about pre-analysis
-   */
-  async handlePreAnalysisDecision(conversation, messageText, client) {
-    const decision = messageText.toLowerCase().trim();
+  async handleStrategicInfoCollection(conversation, messageText, client) {
+    const strategicInfo = conversation.strategicQuestions;
     
-    // Check for positive responses
-    const positiveResponses = ['sim', 'yes', 'quero', 'aceito', 'gostaria', 'ok', 'pode', 'manda', 'enviar'];
-    const negativeResponses = ['não', 'nao', 'no', 'obrigado', 'obrigada', 'dispenso', 'sem necessidade'];
-    
-    const wantsPreAnalysis = positiveResponses.some(word => decision.includes(word));
-    const doesntWantPreAnalysis = negativeResponses.some(word => decision.includes(word));
-    
-    if (wantsPreAnalysis) {
-      // Client wants pre-analysis
-      conversation.state = 'GENERATING_PREANALYSIS';
-      return await this.generatePreAnalysis(conversation);
-    } else if (doesntWantPreAnalysis) {
-      // Client doesn't want pre-analysis, complete conversation
-      conversation.state = 'COMPLETED';
-      return conversation.completionMessage || 'Entendido. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
+    if (!strategicInfo || !strategicInfo.currentlyAsking) {
+      // Something went wrong, move to complement phase
+      conversation.state = 'AWAITING_COMPLEMENT';
+      return await this.offerComplementOption(conversation);
+    }
+
+    const currentlyAsking = strategicInfo.currentlyAsking;
+
+    // Extract the answer using the intelligent service
+    const extractedAnswer = this.legalFieldQuestionsService.extractAnswerValue(
+      null, // question object not needed in new approach
+      messageText,
+      currentlyAsking
+    );
+
+    // Store the collected answer
+    if (!conversation.analysis) {
+      conversation.analysis = {};
+    }
+
+    if (!conversation.analysis.strategicInfo) {
+      conversation.analysis.strategicInfo = {
+        legalField: strategicInfo.fieldInfo.displayName,
+        collectedAnswers: {},
+        extractedAt: new Date().toISOString()
+      };
+    }
+
+    conversation.analysis.strategicInfo.collectedAnswers[currentlyAsking.key] = extractedAnswer;
+
+    // Remove this requirement from missing info
+    strategicInfo.missingInfo = strategicInfo.missingInfo.filter(
+      info => info.key !== currentlyAsking.key
+    );
+
+    // Reset currently asking
+    strategicInfo.currentlyAsking = null;
+
+    // Check if there are more questions needed
+    if (strategicInfo.missingInfo.length > 0) {
+      console.log(`[STRATEGIC] Answer collected for ${currentlyAsking.key}. ${strategicInfo.missingInfo.length} questions remaining.`);
+      
+      // Immediately ask the next question - no delay
+      return await this.askNextStrategicQuestion(conversation, client);
     } else {
-      // Unclear response, ask for clarification
-      const clarificationPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório BriseWare.
+      // All strategic questions completed
+      conversation.state = 'AWAITING_COMPLEMENT';
+      
+      const firstName = client.name?.split(' ')[0] || 'cliente';
+      const thankYouMessage = `Perfeito, ${firstName}! Agora tenho todas as informações específicas necessárias para que nosso advogado especialista possa analisar seu caso da melhor forma.`;
+      
+      // Return thank you message and then offer complement option
+      setTimeout(async () => {
+        if (this.sendResponseCallback) {
+          const complementOffer = await this.offerComplementOption(conversation);
+          await this.sendResponseCallback(complementOffer);
+        }
+      }, 2000);
+      
+      return thankYouMessage;
+    }
+  }
 
-O cliente respondeu sobre a pré-análise mas a resposta não ficou clara: "${messageText}"
+  async offerComplementOption(conversation) {
+    const firstName = conversation.client.name?.split(' ')[0] || 'cliente';
+    
+    // Get the conversation history to understand the emotional context
+    const conversationMessages = conversation.conversationHistory || [];
+    const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
+    
+    const offerPrompt = `Você é Ana, assistente jurídica empática. Você acabou de coletar as informações necessárias do cliente ${firstName}.
 
-TAREFA: Esclarecer se ele quer ou não a pré-análise.
+HISTÓRIA COMPARTILHADA PELO CLIENTE:
+"${allUserMessages}"
+
+SITUAÇÃO: Você acabou de ouvir a história do cliente e coletou as informações específicas. Agora precisa:
+1. Oferecer uma mensagem de apoio genuína e natural
+2. Dar a oportunidade de complementar com mais detalhes
+3. Indicar que o caso será analisado por um advogado
 
 INSTRUÇÕES:
-- Seja educada e paciente
-- Reformule a pergunta de forma mais direta
-- Mencione que é só responder "sim" ou "não"
-- Mantenha tom amigável
-- SEMPRE responda em português brasileiro
+- Seja genuinamente empática, mas de forma natural (não robótica)
+- Reconheça brevemente a situação difícil se apropriado
+- Mencione que o advogado especialista cuidará do caso
+- Ofereça a oportunidade de adicionar mais detalhes
+- Use linguagem calorosa mas profissional
+- NÃO seja excessivamente dramática ou repetitiva
+
+FORMATO: Uma mensagem empática mas equilibrada.
 
 Responda APENAS com sua mensagem:`;
 
-      return await this.groqService.generateResponse(clarificationPrompt);
+    return await this.groqService.generateResponse(offerPrompt);
+  }
+
+  async handleComplementCollection(conversation, messageText, client) {
+    const lowerText = messageText.toLowerCase().trim();
+    
+    // Check if client wants to add more details or is done
+    const isFinishing = lowerText.includes('não') ||
+                       lowerText.includes('nao') ||
+                       lowerText.includes('só isso') ||
+                       lowerText.includes('so isso') ||
+                       lowerText.includes('é isso') ||
+                       lowerText.includes('e isso') ||
+                       lowerText.includes('obrigad') ||
+                       lowerText.includes('tchau') ||
+                       lowerText.includes('valeu') ||
+                       lowerText.includes('pode ser') ||
+                       lowerText.includes('tá bom') ||
+                       lowerText.includes('ta bom') ||
+                       lowerText.includes('ok') ||
+                       lowerText.length < 10;
+
+    if (isFinishing) {
+      // Client is done, complete the conversation
+      conversation.state = 'COMPLETED';
+      return await this.completeTriageWithEmpathy(conversation);
+    } else {
+      // Client has more details to add
+      // Add this message to conversation history
+      if (!conversation.conversationHistory) {
+        conversation.conversationHistory = [];
+      }
+      
+      conversation.conversationHistory.push({
+        role: 'user',
+        content: messageText,
+        timestamp: new Date().toISOString(),
+        isComplement: true // Mark as complement information
+      });
+
+      // Update the analysis with the new information
+      const allUserMessages = conversation.conversationHistory
+        .filter(msg => msg.role === 'user')
+        .map(msg => msg.content)
+        .join('\n\n');
+      
+      // Re-analyze with the additional information
+      if (conversation.analysis) {
+        const updatedAnalysis = await this.triageService.triageFromText(allUserMessages, client.phone, this.groqService);
+        // Merge new analysis with existing one, keeping the original structure
+        conversation.analysis = {
+          ...conversation.analysis,
+          ...updatedAnalysis,
+          case: {
+            ...conversation.analysis.case,
+            ...updatedAnalysis.case,
+            complemented: true // Mark that it was complemented
+          }
+        };
+      }
+
+      // Ask if they have anything else to add
+      const complementPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} acabou de fornecer informações adicionais sobre seu caso.
+
+NOVA INFORMAÇÃO RECEBIDA: "${messageText}"
+
+TAREFA: Reconhecer as informações adicionais e perguntar se há mais alguma coisa importante.
+
+INSTRUÇÕES:
+- Agradeça pelas informações complementares
+- Seja breve e natural
+- Pergunte se há mais algum detalhe importante que queira adicionar
+- Ou se está tudo ok para prosseguir
+- Use linguagem calorosa mas objetiva
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(complementPrompt);
     }
   }
 
   /**
-   * Generate a pre-analysis of the case
+   * Complete conversation with empathy
    */
-  async generatePreAnalysis(conversation) {
-    // Collect all the case information from stored messages
-    const messages = this.messages.get(conversation.id) || [];
-    console.log(`Debug: Found ${messages.length} messages for conversation ${conversation.id}`);
-    console.log(`Debug: Messages:`, messages.map(m => ({direction: m.direction, body: m.body?.substring(0, 50)})));
+  async completeTriageWithEmpathy(conversation) {
+    // Get the legal field from the analysis
+    const legalField = conversation.analysis?.case?.category || 'Jurídico';
     
-    const caseInfo = messages
-      .filter(msg => msg.direction === 'IN') // User messages are stored as 'IN'
-      .map(msg => msg.body || msg.text) // Use body or text property
-      .join('\n');
+    // Get the conversation history to understand the emotional context
+    const conversationMessages = conversation.conversationHistory || [];
+    const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
     
-    console.log(`Debug: Extracted caseInfo length: ${caseInfo.length}`);
-    console.log(`Debug: CaseInfo preview: ${caseInfo.substring(0, 200)}...`);
-    
-    // Also include any stored case details
-    const additionalInfo = conversation.caseDetails || '';
-    const fullCaseInfo = [caseInfo, additionalInfo].filter(Boolean).join('\n\n');
-    
-    if (!fullCaseInfo || fullCaseInfo.trim().length === 0) {
-      console.log(`Debug: No case info found, falling back`);
-      // Fallback to basic conversation data if no detailed messages
-      const basicInfo = `Cliente: ${conversation.client.name}\nTelefone: ${conversation.client.phone}\nEmail: ${conversation.client.email}`;
-      return 'Desculpe, não tenho informações suficientes sobre o caso para gerar uma pré-análise detalhada. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
-    }
-    
-    const preAnalysisPrompt = `Você é uma advogada especialista brasileira fazendo uma pré-análise CONCISA de um caso jurídico.
+    const completionPrompt = `Você é ${this.assistantName}, assistente jurídica empática do escritório V3.
 
-INFORMAÇÕES DO CASO:
-${fullCaseInfo}
+HISTÓRIA COMPARTILHADA PELO CLIENTE:
+"${allUserMessages}"
 
-TAREFA: Criar uma pré-análise RESUMIDA e objetiva do caso.
+Você acabou de ouvir toda a história do cliente sobre um caso de ${legalField}.
 
-ESTRUTURA DA ANÁLISE (use markdown):
-### 1. Natureza do caso
-### 2. Principais pontos jurídicos
-### 3. Documentos essenciais
-### 4. Próximos passos
+ANÁLISE EMOCIONAL: Examine se a história contém:
+- Sofrimento emocional (ansiedade, depressão, burnout, insônia, estresse)
+- Situações traumáticas ou injustas
+- Problemas de saúde mental ou física
+- Dificuldades financeiras
+- Sentimentos de impotência ou desespero
+- Situações que afetam a dignidade da pessoa
 
-INSTRUÇÕES:
-- Seja CONCISA e objetiva (máximo 2000 caracteres)
-- Use markdown para formatação (títulos com ###)
-- Linguagem técnica mas acessível
-- Seja específica sobre a situação
-- NÃO faça promessas sobre resultados
-- Mencione que é análise preliminar
-- SEMPRE responda em português brasileiro
+TAREFA: Finalizar a conversa com genuína empatia e acolhimento humano.
 
-IMPORTANTE: Finalize com uma linha explicando que esta é uma análise preliminar.
+INSTRUÇÕES OBRIGATÓRIAS:
+- SEMPRE demonstre genuína empatia e compreensão pela dor/sofrimento
+- Reconheça as dificuldades específicas que a pessoa está enfrentando
+- Valide os sentimentos e o sofrimento do cliente
+- Use linguagem calorosa, humana e acolhedora (não corporativa)
+- Transmita apoio emocional genuíno
+- Assegure que um advogado especialista cuidará do caso com dedicação
+- Transmita esperança e confiança de que a situação pode melhorar
+- Use palavras que demonstrem que vocês realmente se importam
+- EVITE linguagem fria, técnica ou burocrática
 
-Responda APENAS com a pré-análise em markdown:`;
+FORMATO: Fale como uma pessoa real e empática, não como um robô. Demonstre que você realmente entende e se importa com o sofrimento da pessoa.
 
-    try {
-      const preAnalysis = await this.groqService.generateAnalysisResponse(preAnalysisPrompt);
-      
-      // Complete the conversation after generating pre-analysis
-      conversation.state = 'COMPLETED';
-      conversation.preAnalysis = preAnalysis; // Store the pre-analysis
-      
-      return preAnalysis;
-    } catch (error) {
-      console.error('Error generating pre-analysis:', error);
-      conversation.state = 'COMPLETED';
-      return 'Desculpe, houve um problema ao gerar a pré-análise. Nosso advogado especializado analisará seu caso e entrará em contato em breve.';
-    }
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(completionPrompt);
   }
+
 }
 
 export default ConversationFlowService;

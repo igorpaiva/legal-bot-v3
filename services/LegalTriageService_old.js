@@ -133,7 +133,7 @@ export class LegalTriageService {
   }
 
   getWelcomeMessage() {
-    return `👋 Olá! Bem-vindo(a) ao atendimento do *Escritório Jurídico BriseWare*.
+    return `👋 Olá! Bem-vindo(a) ao atendimento do *Escritório Jurídico V3*.
 
 Sou seu assistente virtual e vou ajudá-lo a organizar suas informações para que nossos advogados possam atendê-lo da melhor forma.
 

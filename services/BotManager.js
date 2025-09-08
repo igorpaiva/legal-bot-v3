@@ -513,6 +513,24 @@ export class BotManager {
 
       let response;
 
+      // Set up callback for message burst responses
+      const sendBurstResponse = async (burstResponse) => {
+        try {
+          // Add human-like delay before sending burst response
+          await botData.humanLikeDelay.waitBeforeResponse();
+          
+          // Send the burst response (split if too long for WhatsApp)
+          await this.sendLongMessage(chat, burstResponse, botData.humanLikeDelay);
+          
+          console.log(`Bot ${botData.id} sent burst response to ${contactName}: ${burstResponse.substring(0, 100)}...`);
+        } catch (error) {
+          console.error(`Error sending burst response for bot ${botData.id}:`, error);
+        }
+      };
+
+      // Set the callback for the conversation flow service
+      botData.conversationFlowService.setSendResponseCallback(sendBurstResponse);
+
       // Use ConversationFlowService for all message handling
       // It will handle the complete conversation flow like the original Java system
       response = await botData.conversationFlowService.processIncomingMessage(
@@ -520,6 +538,12 @@ export class BotManager {
         messageText,
         contactName
       );
+
+      // Check if response is null (message burst waiting)
+      if (!response) {
+        console.log(`Bot ${botData.id} - Message added to burst, waiting for more messages`);
+        return; // Don't send anything yet, waiting for message burst to complete
+      }
 
       // Add human-like delay before sending response
       await botData.humanLikeDelay.waitBeforeResponse();

@@ -210,12 +210,31 @@ class PdfGenerationService {
           word-wrap: break-word;
           line-height: 1.5;
         }
+        
+        .answer-text {
+          color: #555;
+          font-style: italic;
+          display: block;
+          margin-top: 5px;
+          padding: 5px;
+          background: #fff;
+          border-radius: 3px;
+          border-left: 3px solid #25d366;
+        }
+        
+        .completion-note {
+          text-align: right;
+          margin-top: 15px;
+          padding-top: 10px;
+          border-top: 1px solid #eee;
+          color: #666;
+        }
       </style>
     </head>
     <body>
       <div class="header">
         <h1>RELATÓRIO DE TRIAGEM JURÍDICA</h1>
-        <div class="subtitle">BriseWare - Sistema de Triagem Jurídica</div>
+        <div class="subtitle">V3 - Sistema de Triagem Jurídica</div>
       </div>
 
       <!-- Client Information -->
@@ -280,6 +299,35 @@ class PdfGenerationService {
         </div>
         ` : ''}
       </div>
+
+      ${analysis.strategicInfo ? `
+      <!-- Strategic Information -->
+      <div class="section">
+        <h2>📊 INFORMAÇÕES ESPECÍFICAS - ${this.escapeHtml(analysis.strategicInfo.legalField)}</h2>
+        <div class="info-grid">
+          ${analysis.strategicInfo.collectedAnswers ? 
+            Object.entries(analysis.strategicInfo.collectedAnswers).map(([key, answerData]) => `
+            <div class="info-item">
+              <strong>${this.escapeHtml(answerData.question)}</strong>
+              <br>
+              <span class="answer-text">${this.escapeHtml(answerData.answer)}</span>
+            </div>
+            `).join('') : 
+            analysis.strategicInfo.extractedInfo ? 
+            Object.entries(analysis.strategicInfo.extractedInfo).map(([key, infoData]) => `
+            <div class="info-item">
+              <strong>${this.escapeHtml(infoData.description)}</strong>
+              <br>
+              <span class="answer-text">Informação identificada na conversa</span>
+            </div>
+            `).join('') : ''
+          }
+        </div>
+        <div class="completion-note">
+          <small>Informações coletadas em: ${new Date(analysis.strategicInfo.extractedAt || analysis.strategicInfo.completedAt || new Date()).toLocaleString('pt-BR')}</small>
+        </div>
+      </div>
+      ` : ''}
 
       ${analysis.legal_solution ? `
       <!-- Legal Solution -->
@@ -382,7 +430,7 @@ class PdfGenerationService {
       ` : ''}
 
       <div class="footer">
-        Gerado em: ${new Date().toLocaleString('pt-BR')} | BriseWare - Sistema de Triagem Jurídica
+        Gerado em: ${new Date().toLocaleString('pt-BR')} | V3 - Sistema de Triagem Jurídica
       </div>
     </body>
     </html>
@@ -512,7 +560,7 @@ class PdfGenerationService {
     <body>
       <div class="header">
         <h1>RELATÓRIO GERAL DE CONVERSAS</h1>
-        <div class="subtitle">BriseWare - Sistema de Triagem Jurídica</div>
+        <div class="subtitle">V3 - Sistema de Triagem Jurídica</div>
       </div>
 
       <div class="section">
@@ -566,7 +614,7 @@ class PdfGenerationService {
       </div>
 
       <div class="footer">
-        Gerado em: ${new Date().toLocaleString('pt-BR')} | BriseWare - Sistema de Triagem Jurídica
+        Gerado em: ${new Date().toLocaleString('pt-BR')} | V3 - Sistema de Triagem Jurídica
       </div>
     </body>
     </html>
@@ -581,8 +629,6 @@ class PdfGenerationService {
       'ANALYZING_CASE': 'Analisando Caso',
       'COLLECTING_DETAILS': 'Coletando Detalhes',
       'COLLECTING_DOCUMENTS': 'Coletando Documentos',
-      'AWAITING_PREANALYSIS_DECISION': 'Aguardando Decisão Pré-Análise',
-      'GENERATING_PREANALYSIS': 'Gerando Pré-Análise',
       'AWAITING_LAWYER': 'Aguardando Advogado',
       'COMPLETED': 'Concluído'
     };
