@@ -354,15 +354,121 @@ class DatabaseService {
     }
   }
 
-  // Health check
-  isHealthy() {
+  // Health check method
+  static isHealthy() {
     try {
-      this.db.prepare('SELECT 1').get();
+      if (!databaseInstance || !databaseInstance.db) return false;
+      
+      // Test a simple query
+      const result = databaseInstance.db.prepare('SELECT 1 as test').get();
+      return result && result.test === 1;
+    } catch (error) {
+      console.error('Database health check failed:', error);
+      return false;
+    }
+  }
+
+  // Get database file path
+  static getDatabasePath() {
+    return databaseInstance.dbPath;
+  }
+
+  // Create backup connection
+  static createBackupConnection(backupPath) {
+    return new Database(backupPath);
+  }
+
+  // Backup database
+  static backupDatabase(targetDb) {
+    try {
+      // Use SQLite backup API
+      const backup = databaseInstance.db.backup(targetDb);
+      backup.step(-1); // Copy all pages
+      backup.finish();
       return true;
     } catch (error) {
-      return false;
+      console.error('Database backup failed:', error);
+      throw error;
+    }
+  }
+
+  // Get database version/schema info
+  static getVersion() {
+    try {
+      const result = databaseInstance.db.prepare('SELECT sql FROM sqlite_master WHERE type="table"').all();
+      return {
+        tables: result.length,
+        schemaHash: this.generateSchemaHash(result)
+      };
+    } catch (error) {
+      return { tables: 0, schemaHash: 'unknown' };
+    }
+  }
+
+  // Generate schema hash for version tracking
+  static generateSchemaHash(schema) {
+    const crypto = require('crypto');
+    const schemaString = schema.map(s => s.sql).join('');
+    return crypto.createHash('md5').update(schemaString).digest('hex').substring(0, 8);
+  }
+
+  // Get all data from a table (for SQL dumps)
+  static getAllFromTable(tableName) {
+    try {
+      return databaseInstance.db.prepare(`SELECT * FROM ${tableName}`).all();
+    } catch (error) {
+      console.error(`Error getting data from table ${tableName}:`, error);
+      return [];
+    }
+  }
+
+  // Count methods for statistics
+  static getUserCount() {
+    try {
+      const result = databaseInstance.db.prepare('SELECT COUNT(*) as count FROM users').get();
+      return result.count;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  static getBotCount() {
+    try {
+      const result = databaseInstance.db.prepare('SELECT COUNT(*) as count FROM bots').get();
+      return result.count;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  static getLawyerCount() {
+    try {
+      const result = databaseInstance.db.prepare('SELECT COUNT(*) as count FROM lawyers').get();
+      return result.count;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  static getConversationCount() {
+    try {
+      const result = databaseInstance.db.prepare('SELECT COUNT(*) as count FROM conversations').get();
+      return result.count;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  static getMessageCount() {
+    try {
+      const result = this.db.prepare('SELECT COUNT(*) as count FROM messages').get();
+      return result.count;
+    } catch (error) {
+      return 0;
     }
   }
 }
 
-export default new DatabaseService();
+// Create and export a singleton instance
+const databaseInstance = new DatabaseService();
+export default databaseInstance;

@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+client/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production builds
+client/build/
+client/dist/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Cache and temporary files
+.wwebjs_cache/
+.wwebjs_auth/
+sessions/
+temp/
+uploads/
+logs/
+data/
+backups/
+
+# Git and version control
+.git/
+.gitignore
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+docs/
+README.md
+*.md
+
+# Reports and PDFs
+*.pdf
+
+# Monitoring configs (we'll copy them separately)
+docker/

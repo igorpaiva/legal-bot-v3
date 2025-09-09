@@ -26,19 +26,34 @@ export class UserService {
 
   // Create default admin user if no users exist
   async createDefaultAdminUser() {
-    const adminUser = {
-      id: uuidv4(),
-      email: 'admin@legal-bot.com',
-      password: await bcrypt.hash('admin123', this.SALT_ROUNDS),
-      role: 'admin',
-      lawOfficeName: null,
-      botCredits: 0,
-      isActive: true
-    };
+    try {
+      // Check if admin already exists by email
+      const existingAdmin = DatabaseService.getUserByEmail('admin@legal-bot.com');
+      if (existingAdmin) {
+        console.log('Default admin user already exists');
+        return existingAdmin;
+      }
 
-    DatabaseService.createUser(adminUser);
-    console.log('Created default admin user: admin@legal-bot.com / admin123');
-    return adminUser;
+      const adminUser = {
+        id: uuidv4(),
+        email: 'admin@legal-bot.com',
+        password: await bcrypt.hash('admin123', this.SALT_ROUNDS),
+        role: 'admin',
+        lawOfficeName: null,
+        botCredits: 0,
+        isActive: true
+      };
+
+      DatabaseService.createUser(adminUser);
+      console.log('Created default admin user: admin@legal-bot.com / admin123');
+      return adminUser;
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        console.log('Default admin user already exists (UNIQUE constraint)');
+        return DatabaseService.getUserByEmail('admin@legal-bot.com');
+      }
+      throw error;
+    }
   }
 
   // Get all law offices (for admin view)

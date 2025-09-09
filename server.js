@@ -5,6 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import botRoutes from './routes/bot.js';
@@ -12,6 +13,7 @@ import adminRoutes from './routes/admin.js';
 import pdfRoutes from './routes/pdf.js';
 import lawyersRoutes from './routes/lawyers.js';
 import authRoutes from './routes/auth.js';
+import monitoringRoutes from './routes/monitoring.js';
 import { BotManager } from './services/BotManager.js';
 import UserService from './services/UserService.js';
 import DatabaseService from './services/DatabaseService.js';
@@ -99,14 +101,38 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bot', botRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/lawyers', lawyersRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'client/dist')));
+  // Check if frontend build exists
+  const frontendPath = path.join(__dirname, 'client/dist/index.html');
   
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'client/dist/index.html'));
-  });
+  if (fs.existsSync(frontendPath)) {
+    app.use(express.static(path.join(__dirname, 'client/dist')));
+    
+    app.get('*', (req, res) => {
+      res.sendFile(frontendPath);
+    });
+  } else {
+    console.log('⚠️  Frontend build not found. API-only mode enabled.');
+    
+    // Serve a simple message for non-API routes
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        res.status(404).json({ error: 'API endpoint not found' });
+      } else {
+        res.json({ 
+          message: 'Legal Bot API Server', 
+          status: 'running',
+          mode: 'api-only',
+          note: 'Frontend build not available. Use API endpoints.',
+          health: '/api/monitoring/health',
+          admin: 'admin@legal-bot.com / admin123'
+        });
+      }
+    });
+  }
 }
 
 // Health check endpoint

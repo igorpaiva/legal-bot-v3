@@ -13,7 +13,7 @@ class DataMigration {
     
     try {
       // Check if database is healthy
-      if (!DatabaseService.isHealthy()) {
+      if (!DatabaseService.db) {
         throw new Error('Database is not accessible');
       }
 
