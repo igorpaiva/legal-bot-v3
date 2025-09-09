@@ -13,7 +13,11 @@ const api = axios.create({
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    // Add any auth tokens here if needed
+    // Add auth token if available
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => {
@@ -27,6 +31,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid, redirect to login
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('userData');
+      window.location.reload(); // This will trigger the login screen
+    }
     console.error('API Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }

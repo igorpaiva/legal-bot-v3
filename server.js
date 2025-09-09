@@ -11,7 +11,11 @@ import botRoutes from './routes/bot.js';
 import adminRoutes from './routes/admin.js';
 import pdfRoutes from './routes/pdf.js';
 import lawyersRoutes from './routes/lawyers.js';
+import authRoutes from './routes/auth.js';
 import { BotManager } from './services/BotManager.js';
+import UserService from './services/UserService.js';
+import DatabaseService from './services/DatabaseService.js';
+import DataMigration from './scripts/migrate-data.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -31,8 +35,37 @@ const io = new Server(server, {
   }
 });
 
-// Initialize bot manager
+// Initialize database and services
+async function initializeApplication() {
+  try {
+    console.log('🗃️  Initializing database...');
+    DatabaseService.init();
+    
+    console.log('📦 Running data migration...');
+    await DataMigration.run();
+    
+    console.log('👥 Initializing user service...');
+    const userService = new UserService();
+    
+    console.log('🤖 Initializing bot manager...');
+    const botManager = new BotManager(io);
+    
+    // Make services available to routes
+    app.locals.userService = userService;
+    app.locals.botManager = botManager;
+    
+    console.log('✅ Application initialization completed');
+  } catch (error) {
+    console.error('❌ Application initialization failed:', error);
+    process.exit(1);
+  }
+}
+
+// Initialize bot manager and user service (kept for backward compatibility)
 const botManager = new BotManager(io);
+const userService = new UserService();
+
+// Initialize default admin user (removed as it's now handled in initializeApplication)
 
 // Security middleware
 app.use(helmet());
@@ -46,9 +79,10 @@ app.use(cors({
 // Rate limiting
 app.use(rateLimiter);
 
-// Make botManager available to routes first
+// Make botManager and userService available to routes first
 app.use((req, res, next) => {
   req.botManager = botManager;
+  req.userService = userService;
   req.io = io;
   next();
 });
@@ -61,6 +95,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Other routes
+app.use('/api/auth', authRoutes);
 app.use('/api/bot', botRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/lawyers', lawyersRoutes);
@@ -100,11 +135,18 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3001;
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+// Start server with proper initialization
+async function startServer() {
+  await initializeApplication();
   
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`📱 Admin Panel: http://localhost:3000`);
-  }
-});
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`📱 Admin Panel: http://localhost:3000`);
+    }
+  });
+}
+
+startServer().catch(console.error);

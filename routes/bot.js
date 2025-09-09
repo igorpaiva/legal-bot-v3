@@ -1,23 +1,36 @@
 import express from 'express';
+import { authenticateUser, requireAdmin, requireBotCredits } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Get all bots
-router.get('/', (req, res) => {
+router.get('/', authenticateUser, (req, res) => {
   try {
     const bots = req.botManager.getAllBots();
-    res.json({ success: true, bots });
+    
+    // Filter bots by user's ownership for law offices
+    let userBots = bots;
+    if (req.user.role === 'law_office') {
+      userBots = bots.filter(bot => bot.ownerId === req.user.id);
+    }
+    
+    res.json({ success: true, bots: userBots });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Get specific bot
-router.get('/:id', (req, res) => {
+router.get('/:id', authenticateUser, (req, res) => {
   try {
     const bot = req.botManager.getBot(req.params.id);
     if (!bot) {
       return res.status(404).json({ success: false, error: 'Bot not found' });
+    }
+    
+    // Check if law office user owns this bot
+    if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
     }
     
     res.json({
@@ -42,10 +55,15 @@ router.get('/:id', (req, res) => {
 });
 
 // Create new bot
-router.post('/', async (req, res) => {
+router.post('/', authenticateUser, requireBotCredits, async (req, res) => {
   try {
     const { name, assistantName } = req.body;
-    const botId = await req.botManager.createBot(name, assistantName);
+    const botId = await req.botManager.createBot(name, assistantName, req.user.id);
+    
+    // Deduct bot credit for law office users
+    if (req.user.role === 'law_office') {
+      await req.userService.useBotCredit(req.user.id);
+    }
     
     res.json({ 
       success: true, 
@@ -58,8 +76,18 @@ router.post('/', async (req, res) => {
 });
 
 // Stop bot
-router.post('/:id/stop', async (req, res) => {
+router.post('/:id/stop', authenticateUser, async (req, res) => {
   try {
+    const bot = req.botManager.getBot(req.params.id);
+    if (!bot) {
+      return res.status(404).json({ success: false, error: 'Bot not found' });
+    }
+    
+    // Check if law office user owns this bot
+    if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
     const success = await req.botManager.stopBot(req.params.id);
     if (!success) {
       return res.status(404).json({ success: false, error: 'Bot not found or already stopped' });
@@ -72,8 +100,18 @@ router.post('/:id/stop', async (req, res) => {
 });
 
 // Restart bot
-router.post('/:id/restart', async (req, res) => {
+router.post('/:id/restart', authenticateUser, async (req, res) => {
   try {
+    const bot = req.botManager.getBot(req.params.id);
+    if (!bot) {
+      return res.status(404).json({ success: false, error: 'Bot not found' });
+    }
+    
+    // Check if law office user owns this bot
+    if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
     const success = await req.botManager.restartBot(req.params.id);
     if (!success) {
       return res.status(404).json({ success: false, error: 'Bot not found or failed to restart' });
@@ -86,8 +124,18 @@ router.post('/:id/restart', async (req, res) => {
 });
 
 // Delete bot
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateUser, async (req, res) => {
   try {
+    const bot = req.botManager.getBot(req.params.id);
+    if (!bot) {
+      return res.status(404).json({ success: false, error: 'Bot not found' });
+    }
+    
+    // Check if law office user owns this bot
+    if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
     const success = await req.botManager.deleteBot(req.params.id);
     if (!success) {
       return res.status(404).json({ success: false, error: 'Bot not found' });
@@ -100,11 +148,16 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Get bot QR code
-router.get('/:id/qr', (req, res) => {
+router.get('/:id/qr', authenticateUser, (req, res) => {
   try {
     const bot = req.botManager.getBot(req.params.id);
     if (!bot) {
       return res.status(404).json({ success: false, error: 'Bot not found' });
+    }
+    
+    // Check if law office user owns this bot
+    if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
     }
     
     if (!bot.qrCode) {

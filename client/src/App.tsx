@@ -11,13 +11,20 @@ import {
   Alert,
   Snackbar,
   Tabs,
-  Tab
+  Tab,
+  Button,
+  Menu,
+  MenuItem,
+  Avatar
 } from '@mui/material';
+import { AccountCircle as AccountIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
 import { io, Socket } from 'socket.io-client';
 import Dashboard from './components/Dashboard';
 import BotManager from './components/BotManager';
 import Reports from './components/Reports';
 import Lawyers from './components/Lawyers';
+import AdminDashboard from './components/AdminDashboard';
+import Login from './components/Login';
 import { Bot, SystemStatus } from './types';
 import './App.css';
 
@@ -44,8 +51,19 @@ interface AppState {
   };
 }
 
+interface User {
+  id: string;
+  email: string;
+  role: 'admin' | 'law_office';
+  lawOfficeName?: string;
+  botCredits?: number;
+}
+
 function App() {
   const [tabValue, setTabValue] = useState(0);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [state, setState] = useState<AppState>({
     bots: [],
     systemStatus: null,
@@ -58,7 +76,27 @@ function App() {
   });
 
   useEffect(() => {
-    // Initialize socket connection
+    // Check for existing authentication
+    const token = localStorage.getItem('authToken');
+    const userData = localStorage.getItem('userData');
+    
+    if (token && userData) {
+      try {
+        const parsedUser = JSON.parse(userData);
+        setUser(parsedUser);
+        setIsAuthenticated(true);
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('userData');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Initialize socket connection only when authenticated
     const socket = io(process.env.REACT_APP_SERVER_URL || 'http://localhost:3001');
     
     setState(prev => ({ ...prev, socket }));
@@ -109,7 +147,54 @@ function App() {
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [isAuthenticated]);
+
+  const handleLogin = (token: string, userData: User) => {
+    setUser(userData);
+    setIsAuthenticated(true);
+    setTabValue(0); // Start at first tab
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('userData');
+    setUser(null);
+    setIsAuthenticated(false);
+    setTabValue(0); // Reset to first tab
+    if (state.socket) {
+      state.socket.disconnect();
+    }
+  };
+
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+  };
+
+  const refreshUserData = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        localStorage.setItem('userData', JSON.stringify(userData));
+      }
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+    }
+  };
 
   const showNotification = (message: string, severity: 'success' | 'error' | 'warning' | 'info') => {
     setState(prev => ({
@@ -129,6 +214,39 @@ function App() {
     setTabValue(newValue);
   };
 
+  // Get available tabs based on user role
+  const getAvailableTabs = () => {
+    if (user?.role === 'law_office') {
+      return [
+        { label: 'Dashboard', key: 'dashboard' },
+        { label: 'Gerenciar Bots', key: 'bots' },
+        { label: 'Relatórios', key: 'reports' },
+        { label: 'Advogados', key: 'lawyers' }
+      ];
+    } else if (user?.role === 'admin') {
+      return [
+        { label: 'Painel Admin', key: 'admin-dashboard' },
+        { label: 'Escritórios', key: 'law-offices' }
+      ];
+    }
+    return [];
+  };
+
+  const getCurrentTabKey = () => {
+    const tabs = getAvailableTabs();
+    return tabs[tabValue]?.key || '';
+  };
+
+  // Don't show main app if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Login onLogin={handleLogin} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -136,42 +254,95 @@ function App() {
         <AppBar position="static">
           <Toolbar>
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              WhatsApp Bot Admin Panel
+              Painel Admin Legal Bot - {user?.role === 'admin' ? 'Administrador' : user?.lawOfficeName}
             </Typography>
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="body2">
+                {user?.email}
+              </Typography>
+              <Button
+                color="inherit"
+                onClick={handleMenuOpen}
+                startIcon={<AccountIcon />}
+              >
+                Conta
+              </Button>
+              <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={handleMenuClose}
+              >
+                <MenuItem onClick={handleLogout}>
+                  <LogoutIcon sx={{ mr: 1 }} />
+                  Sair
+                </MenuItem>
+              </Menu>
+            </Box>
           </Toolbar>
         </AppBar>
-        
+
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs value={tabValue} onChange={handleTabChange} aria-label="admin panel tabs">
-              <Tab label="Dashboard" />
-              <Tab label="Relatórios" />
-              <Tab label="Advogados" />
+            <Tabs value={tabValue} onChange={handleTabChange}>
+              {getAvailableTabs().map((tab, index) => (
+                <Tab key={tab.key} label={tab.label} />
+              ))}
             </Tabs>
           </Box>
 
-          {tabValue === 0 && (
+          {/* Law Office User Content */}
+          {user?.role === 'law_office' && (
             <>
-              <Dashboard 
-                bots={state.bots} 
-                systemStatus={state.systemStatus}
-              />
-              
-              <Box sx={{ mt: 4 }}>
+              {getCurrentTabKey() === 'dashboard' && (
+                <>
+                  <Dashboard 
+                    bots={state.bots} 
+                    systemStatus={state.systemStatus}
+                    user={user}
+                  />
+                  
+                  <Box sx={{ mt: 4 }}>
+                    <BotManager 
+                      bots={state.bots}
+                      onNotification={showNotification}
+                      onUserDataRefresh={refreshUserData}
+                      user={user}
+                    />
+                  </Box>
+                </>
+              )}
+
+              {getCurrentTabKey() === 'bots' && (
                 <BotManager 
                   bots={state.bots}
                   onNotification={showNotification}
+                  onUserDataRefresh={refreshUserData}
+                  user={user}
                 />
-              </Box>
+              )}
+
+              {getCurrentTabKey() === 'reports' && (
+                <Reports />
+              )}
+
+              {getCurrentTabKey() === 'lawyers' && (
+                <Lawyers />
+              )}
             </>
           )}
 
-          {tabValue === 1 && (
-            <Reports />
-          )}
+          {/* Admin User Content */}
+          {user?.role === 'admin' && (
+            <>
+              {getCurrentTabKey() === 'admin-dashboard' && (
+                <AdminDashboard />
+              )}
 
-          {tabValue === 2 && (
-            <Lawyers />
+              {getCurrentTabKey() === 'law-offices' && (
+                <AdminDashboard />
+              )}
+            </>
           )}
         </Container>
 

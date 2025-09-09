@@ -36,6 +36,14 @@ import api from '../services/api';
 interface BotManagerProps {
   bots: Bot[];
   onNotification: (message: string, severity: 'success' | 'error' | 'warning' | 'info') => void;
+  onUserDataRefresh?: () => void;
+  user?: {
+    id: string;
+    email: string;
+    role: 'admin' | 'law_office';
+    lawOfficeName?: string;
+    botCredits?: number;
+  };
 }
 
 interface QRCodeDialogProps {
@@ -193,7 +201,7 @@ const BotCard: React.FC<{
   );
 };
 
-const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
+const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDataRefresh, user }) => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
@@ -215,6 +223,11 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
         setCreateDialogOpen(false);
         setNewBotName('');
         setNewAssistantName('Ana'); // Reset to default
+        
+        // Refresh user data to update bot credits
+        if (onUserDataRefresh) {
+          onUserDataRefresh();
+        }
         
         // The bot will be added via socket.io events
       } else {
@@ -263,28 +276,51 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification }) => {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">
-          Bot Management
-        </Typography>
+        <Box>
+          <Typography variant="h4">
+            Gerenciamento de Bots
+          </Typography>
+          {user?.role === 'law_office' && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Créditos disponíveis: <strong>{user.botCredits || 0}</strong> | Bots criados: <strong>{bots.length}</strong> | Restantes: <strong>{Math.max(0, (user.botCredits || 0) - bots.length)}</strong>
+            </Typography>
+          )}
+        </Box>
         <Button
           variant="contained"
           startIcon={<Add />}
           onClick={() => setCreateDialogOpen(true)}
-          disabled={loading}
+          disabled={loading || (user?.role === 'law_office' && (user.botCredits || 0) <= bots.length)}
         >
-          Create New Bot
+          Criar Novo Bot
         </Button>
       </Box>
+
+      {/* Credits Warning for Law Office Users */}
+      {user?.role === 'law_office' && (
+        <>
+          {(user.botCredits || 0) <= bots.length && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              Você não possui créditos suficientes para criar novos bots. Entre em contato com o administrador para obter mais créditos.
+            </Alert>
+          )}
+          {(user.botCredits || 0) - bots.length <= 1 && (user.botCredits || 0) > bots.length && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Você possui apenas {(user.botCredits || 0) - bots.length} crédito(s) restante(s). Considere solicitar mais créditos ao administrador.
+            </Alert>
+          )}
+        </>
+      )}
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
         {bots.length === 0 ? (
           <Card sx={{ minWidth: 300, m: 1 }}>
             <CardContent>
               <Typography variant="h6" align="center" color="textSecondary">
-                No bots created yet
+                Nenhum bot criado ainda
               </Typography>
               <Typography variant="body2" align="center" color="textSecondary">
-                Click "Create New Bot" to get started
+                Clique em "Criar Novo Bot" para começar
               </Typography>
             </CardContent>
           </Card>

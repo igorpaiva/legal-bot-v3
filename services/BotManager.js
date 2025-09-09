@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { GroqService } from './GroqService.js';
 import { HumanLikeDelay } from './HumanLikeDelay.js';
 import { LegalTriageService } from './LegalTriageService.js';
-import { BotPersistence } from './BotPersistence.js';
+import DatabaseService from './DatabaseService.js';
 import { ConversationFlowService } from './ConversationFlowService.js';
 import { AudioTranscriptionService } from './AudioTranscriptionService.js';
 import { PdfProcessingService } from './PdfProcessingService.js';
@@ -14,7 +14,6 @@ export class BotManager {
   constructor(io) {
     this.io = io;
     this.bots = new Map(); // Initialize the bots Map
-    this.botPersistence = new BotPersistence();
     
     // Load persisted bots on startup
     this.loadPersistedData();
@@ -25,11 +24,8 @@ export class BotManager {
     try {
       console.log('Loading persisted bot data...');
       
-      // Load conversations first
-      const allConversations = await this.botPersistence.loadConversations();
-      
-      // Load bot configurations
-      const botConfigs = await this.botPersistence.loadBotConfigs();
+      // Load bot configurations from database
+      const botConfigs = DatabaseService.getAllBots();
       
       for (const config of botConfigs) {
         // Try to restore bots that were previously active or authenticated
@@ -37,16 +33,22 @@ export class BotManager {
           console.log(`Restoring bot: ${config.name} (${config.id}) - Status: ${config.status}`);
           await this.restoreBot(config);
           
-          // Load conversations for this bot
+          // Load conversations for this bot from database
           const botData = this.bots.get(config.id);
-          if (botData && botData.conversationFlowService && allConversations) {
+          if (botData && botData.conversationFlowService) {
             const botConversations = new Map();
-            for (const [key, conversation] of allConversations.entries()) {
-              if (key.startsWith(`${config.id}:`)) {
-                const contactId = key.substring(`${config.id}:`.length);
-                botConversations.set(contactId, conversation);
-              }
+            const conversations = DatabaseService.getBotConversations(config.id);
+            
+            for (const conversation of conversations) {
+              // Format conversation for ConversationFlowService
+              const formattedConversation = {
+                ...conversation,
+                startTime: conversation.startTime ? new Date(conversation.startTime) : new Date(),
+                answers: [] // This would need to be loaded from messages if we store structured answers
+              };
+              botConversations.set(conversation.clientPhone, formattedConversation);
             }
+            
             botData.conversationFlowService.conversations = botConversations;
             console.log(`Loaded ${botConversations.size} conversations for bot ${config.name}`);
           }
@@ -55,7 +57,7 @@ export class BotManager {
         }
       }
       
-      console.log(`Loaded ${botConfigs.length} bot configurations, ${allConversations?.size || 0} total conversations`);
+      console.log(`Loaded ${botConfigs.length} bot configurations`);
       
     } catch (error) {
       console.error('Error loading persisted data:', error);
@@ -124,10 +126,10 @@ export class BotManager {
     } catch (error) {
       console.error(`Error restoring bot ${config.id}:`, error);
       // Update the config to mark as inactive if restoration fails
-      await this.botPersistence.saveBotConfig({
-        ...config,
+      DatabaseService.updateBot(config.id, {
         isActive: false,
-        error: error.message
+        status: 'error',
+        lastActivity: new Date().toISOString()
       });
     }
   }
@@ -135,24 +137,55 @@ export class BotManager {
   // Save all bot data and conversations
   async saveAllData() {
     try {
-      // Save all bot configurations
+      // Save all bot configurations to database
       for (const [botId, botData] of this.bots.entries()) {
-        await this.botPersistence.saveBotConfig(botData);
-      }
-      
-      // Save conversation states from all bots
-      const allConversations = new Map();
-      for (const [botId, botData] of this.bots.entries()) {
-        if (botData.conversationFlowService && botData.conversationFlowService.conversations) {
-          // Merge conversations from all bots with bot prefix to avoid conflicts
-          for (const [contactId, conversation] of botData.conversationFlowService.conversations.entries()) {
-            allConversations.set(`${botId}:${contactId}`, conversation);
-          }
+        try {
+          DatabaseService.updateBot(botId, {
+            name: botData.name,
+            assistantName: botData.assistantName,
+            status: botData.status,
+            phoneNumber: botData.phoneNumber,
+            isActive: botData.isActive,
+            messageCount: botData.messageCount,
+            lastActivity: botData.lastActivity ? botData.lastActivity.toISOString() : null
+          });
+        } catch (error) {
+          console.error(`Error saving bot ${botId} config:`, error);
         }
       }
       
-      if (allConversations.size > 0) {
-        await this.botPersistence.saveConversations(allConversations);
+      // Save conversation states from all bots to database
+      for (const [botId, botData] of this.bots.entries()) {
+        if (botData.conversationFlowService && botData.conversationFlowService.conversations) {
+          for (const [contactId, conversation] of botData.conversationFlowService.conversations.entries()) {
+            try {
+              // Check if conversation exists, update or create
+              const existingConversation = DatabaseService.getConversationByBotAndPhone(botId, contactId);
+              if (existingConversation) {
+                DatabaseService.updateConversation(existingConversation.id, {
+                  status: conversation.status || 'active',
+                  legalField: conversation.legalField,
+                  urgency: conversation.urgency,
+                  summary: conversation.summary
+                });
+              } else {
+                DatabaseService.createConversation({
+                  id: uuidv4(),
+                  botId: botId,
+                  clientPhone: contactId,
+                  clientName: conversation.clientName || 'Cliente',
+                  status: conversation.status || 'active',
+                  legalField: conversation.legalField,
+                  urgency: conversation.urgency,
+                  startTime: conversation.startTime ? conversation.startTime.toISOString() : new Date().toISOString(),
+                  summary: conversation.summary
+                });
+              }
+            } catch (error) {
+              console.error(`Error saving conversation for bot ${botId}, contact ${contactId}:`, error);
+            }
+          }
+        }
       }
       
     } catch (error) {
@@ -160,7 +193,7 @@ export class BotManager {
     }
   }
 
-  async createBot(name = null, assistantName = null) {
+  async createBot(name = null, assistantName = null, ownerId = null) {
     const botId = uuidv4();
     const botName = name || `Bot-${Date.now()}`;
     const defaultAssistantName = assistantName || 'Ana';
@@ -188,6 +221,7 @@ export class BotManager {
       id: botId,
       name: botName,
       assistantName: defaultAssistantName, // Add assistant name field
+      ownerId: ownerId, // Add owner ID for user association
       client,
       status: 'initializing',
       qrCode: null,
@@ -212,6 +246,23 @@ export class BotManager {
     this.setupBotEvents(botData);
     this.setupRetryCallbacks(botData);
     
+    // Save bot to database
+    try {
+      DatabaseService.createBot({
+        id: botId,
+        name: botName,
+        assistantName: defaultAssistantName,
+        ownerId: ownerId,
+        status: 'initializing',
+        phoneNumber: null,
+        isActive: false,
+        messageCount: 0,
+        lastActivity: null
+      });
+    } catch (error) {
+      console.error(`Error saving bot to database:`, error);
+    }
+    
     // Emit bot created event
     this.io.emit('bot-created', {
       id: botData.id,
@@ -235,6 +286,17 @@ export class BotManager {
       botData.status = 'error';
       botData.error = error.message;
       this.emitBotUpdate(botId);
+      
+      // Update bot status in database
+      try {
+        DatabaseService.updateBot(botId, {
+          status: 'error',
+          lastActivity: new Date().toISOString()
+        });
+      } catch (dbError) {
+        console.error(`Error updating bot status in database:`, dbError);
+      }
+      
       throw error;
     }
   }
@@ -275,7 +337,16 @@ export class BotManager {
       this.emitBotUpdate(id);
       // Save bot state when ready (with a small delay to avoid rapid saves)
       setTimeout(() => {
-        this.botPersistence.saveBotConfig(botData);
+        try {
+          DatabaseService.updateBot(id, {
+            status: 'ready',
+            isActive: true,
+            phoneNumber: botData.phoneNumber,
+            lastActivity: botData.lastActivity.toISOString()
+          });
+        } catch (error) {
+          console.error(`Error updating bot ${id} in database:`, error);
+        }
       }, 1000);
       console.log(`Bot ${id} is ready!`);
     });
@@ -294,7 +365,15 @@ export class BotManager {
       botData.isActive = false;
       this.emitBotUpdate(id);
       // Save bot state on auth failure
-      this.botPersistence.saveBotConfig(botData);
+      try {
+        DatabaseService.updateBot(id, {
+          status: 'auth_failed',
+          isActive: false,
+          lastActivity: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error(`Error updating bot ${id} auth failure in database:`, error);
+      }
       console.log(`Bot ${id} authentication failed:`, msg);
     });
 
@@ -304,7 +383,15 @@ export class BotManager {
       botData.error = reason;
       this.emitBotUpdate(id);
       // Save bot state when disconnected
-      this.botPersistence.saveBotConfig(botData);
+      try {
+        DatabaseService.updateBot(id, {
+          status: 'disconnected',
+          isActive: false,
+          lastActivity: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error(`Error updating bot ${id} disconnection in database:`, error);
+      }
       console.log(`Bot ${id} disconnected:`, reason);
     });
 
@@ -607,8 +694,12 @@ export class BotManager {
     const success = await this.stopBot(botId);
     if (success) {
       this.bots.delete(botId);
-      // Remove bot configuration from persistence
-      await this.botPersistence.removeBotConfig(botId);
+      // Remove bot from database
+      try {
+        DatabaseService.deleteBot(botId);
+      } catch (error) {
+        console.error(`Error deleting bot ${botId} from database:`, error);
+      }
       this.io.emit('bot-deleted', { botId });
     }
     return success;

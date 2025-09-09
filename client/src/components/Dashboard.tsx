@@ -19,6 +19,13 @@ import api from '../services/api';
 interface DashboardProps {
   bots: Bot[];
   systemStatus: SystemStatus | null;
+  user?: {
+    id: string;
+    email: string;
+    role: 'admin' | 'law_office';
+    lawOfficeName?: string;
+    botCredits?: number;
+  };
 }
 
 interface StatsCardProps {
@@ -54,7 +61,7 @@ const StatsCard: React.FC<StatsCardProps> = ({ title, value, icon, color, subtit
   </Card>
 );
 
-const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus }) => {
+const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus, user }) => {
   const [config, setConfig] = useState<any>(null);
 
   useEffect(() => {
@@ -114,6 +121,16 @@ const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus }) => {
           icon={<Message />}
           color="#075E54"
         />
+
+        {user?.role === 'law_office' && (
+          <StatsCard
+            title="Créditos de Bot"
+            value={user.botCredits || 0}
+            icon={<SmartToy />}
+            color="#FF6B35"
+            subtitle={`${bots.length} em uso`}
+          />
+        )}
         
         <StatsCard
           title="System Uptime"
