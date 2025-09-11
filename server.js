@@ -14,6 +14,7 @@ import pdfRoutes from './routes/pdf.js';
 import lawyersRoutes from './routes/lawyers.js';
 import authRoutes from './routes/auth.js';
 import monitoringRoutes from './routes/monitoring.js';
+import googleDriveRoutes from './routes/googleDrive.js';
 import { BotManager } from './services/BotManager.js';
 import UserService from './services/UserService.js';
 import DatabaseService from './services/DatabaseService.js';
@@ -30,10 +31,9 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? false 
-      : ['http://localhost:3000', 'http://127.0.0.1:3000'],
-    methods: ['GET', 'POST']
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -72,9 +72,7 @@ const userService = new UserService();
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? false 
-    : ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
   credentials: true
 }));
 
@@ -102,6 +100,7 @@ app.use('/api/bot', botRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/lawyers', lawyersRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/google-drive', googleDriveRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

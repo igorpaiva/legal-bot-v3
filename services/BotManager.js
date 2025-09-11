@@ -9,6 +9,7 @@ import DatabaseService from './DatabaseService.js';
 import { ConversationFlowService } from './ConversationFlowService.js';
 import { AudioTranscriptionService } from './AudioTranscriptionService.js';
 import { PdfProcessingService } from './PdfProcessingService.js';
+import GoogleDriveService from './GoogleDriveService.js';
 
 export class BotManager {
   constructor(io) {
@@ -90,6 +91,7 @@ export class BotManager {
         id: config.id,
         name: config.name,
         assistantName: config.assistantName || 'Ana', // Use saved assistant name or default
+        ownerId: config.ownerId, // Add owner ID from database config
         client,
         status: 'restoring', // Set a specific status for restoration
         qrCode: null,
@@ -108,7 +110,8 @@ export class BotManager {
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
         audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
-        pdfProcessingService: new PdfProcessingService() // Add PDF processing service
+        pdfProcessingService: new PdfProcessingService(), // Add PDF processing service
+        googleDriveService: new GoogleDriveService() // Add Google Drive service
       };
 
       this.bots.set(config.id, botData);
@@ -239,7 +242,8 @@ export class BotManager {
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
       audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
-      pdfProcessingService: new PdfProcessingService() // Add PDF processing service
+      pdfProcessingService: new PdfProcessingService(), // Add PDF processing service
+      googleDriveService: new GoogleDriveService() // Add Google Drive service
     };
 
     this.bots.set(botId, botData);
@@ -483,6 +487,7 @@ export class BotManager {
       // Get contact info
       const contact = await message.getContact();
       const contactName = contact.name || contact.pushname || contact.number;
+      const userPhone = contact.number;
       
       console.log(`Bot ${botData.id} received message from ${contactName} - Type: ${message.type}`);
 
@@ -496,6 +501,10 @@ export class BotManager {
         try {
           // Download and transcribe audio
           const media = await message.downloadMedia();
+          
+          // Upload to Google Drive (if authenticated)
+          await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'audio');
+          
           const transcription = await botData.audioTranscriptionService.transcribeAudio(media);
           
           if (transcription) {
@@ -516,6 +525,9 @@ export class BotManager {
         try {
           // Download the document
           const media = await message.downloadMedia();
+          
+          // Upload to Google Drive (if authenticated)
+          await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'document');
           
           // Check if it's a PDF
           if (media.mimetype && botData.pdfProcessingService.isPdfMimetype(media.mimetype)) {
@@ -575,6 +587,42 @@ export class BotManager {
           console.log(`Bot ${botData.id} sent document processing error to ${contactName}`);
           
           return; // Don't process this through conversation flow
+        }
+      } else if (message.type === 'image') {
+        // Handle image messages
+        console.log(`Bot ${botData.id} - Processing image from ${contactName}`);
+        
+        try {
+          // Download the image
+          const media = await message.downloadMedia();
+          
+          // Upload to Google Drive (if authenticated)
+          await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'image');
+          
+          // Create a text message indicating image was received
+          messageText = 'Recebi sua imagem. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          console.log(`Bot ${botData.id} - Image processed and uploaded to Google Drive`);
+        } catch (error) {
+          console.error(`Bot ${botData.id} - Error processing image:`, error);
+          messageText = 'Recebi sua imagem. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+        }
+      } else if (message.type === 'video') {
+        // Handle video messages
+        console.log(`Bot ${botData.id} - Processing video from ${contactName}`);
+        
+        try {
+          // Download the video
+          const media = await message.downloadMedia();
+          
+          // Upload to Google Drive (if authenticated)
+          await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'video');
+          
+          // Create a text message indicating video was received
+          messageText = 'Recebi seu vídeo. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          console.log(`Bot ${botData.id} - Video processed and uploaded to Google Drive`);
+        } catch (error) {
+          console.error(`Bot ${botData.id} - Error processing video:`, error);
+          messageText = 'Recebi seu vídeo. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
         }
       } else if (message.type === 'chat' && message.body) {
         // Handle regular text messages
@@ -714,6 +762,7 @@ export class BotManager {
       id: bot.id,
       name: bot.name,
       assistantName: bot.assistantName, // Include assistant name
+      ownerId: bot.ownerId, // Include owner ID
       status: bot.status,
       phoneNumber: bot.phoneNumber,
       isActive: bot.isActive,
@@ -918,5 +967,72 @@ export class BotManager {
     }
     
     return parts;
+  }
+
+  /**
+   * Upload media files to Google Drive client folder
+   */
+  async uploadMediaToGoogleDrive(botData, media, contactName, userPhone, mediaType) {
+    try {
+      // Check if Google Drive service is authenticated
+      const authStatus = await botData.googleDriveService.checkAuthentication();
+      
+      if (!authStatus.authenticated) {
+        console.log(`Bot ${botData.id} - Google Drive not authenticated, skipping upload`);
+        return null;
+      }
+
+      // Get or find client information
+      const client = botData.conversationFlowService.findOrCreateClient(userPhone);
+      const clientName = client.name || contactName || 'Unknown Client';
+
+      // Generate filename based on media type
+      let fileName;
+      let fileExtension = '';
+      
+      if (media.mimetype) {
+        // Extract extension from mimetype
+        const mimeTypeMap = {
+          'audio/ogg': 'ogg',
+          'audio/mpeg': 'mp3',
+          'audio/mp4': 'm4a',
+          'audio/wav': 'wav',
+          'application/pdf': 'pdf',
+          'image/jpeg': 'jpg',
+          'image/png': 'png',
+          'image/gif': 'gif',
+          'video/mp4': 'mp4',
+          'video/3gpp': '3gp',
+          'application/msword': 'doc',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
+        };
+        
+        fileExtension = mimeTypeMap[media.mimetype] || 'bin';
+      }
+
+      // Create filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      fileName = `${mediaType}_${timestamp}.${fileExtension}`;
+
+      // Convert media data to buffer
+      const buffer = Buffer.from(media.data, 'base64');
+
+      // Upload to client's Google Drive folder
+      const uploadResult = await botData.googleDriveService.uploadClientDocument(
+        clientName,
+        userPhone,
+        buffer,
+        fileName,
+        media.mimetype
+      );
+
+      console.log(`Bot ${botData.id} - Successfully uploaded ${mediaType} to Google Drive:`, uploadResult.name);
+      
+      return uploadResult;
+    } catch (error) {
+      console.error(`Bot ${botData.id} - Error uploading to Google Drive:`, error);
+      // Don't throw error - just log it and continue with normal processing
+      return null;
+    }
   }
 }

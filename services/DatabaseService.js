@@ -192,14 +192,29 @@ class DatabaseService {
     return stmt.all(ownerId).map(bot => this.formatBot(bot));
   }
 
+  getUserBotCount(ownerId) {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM bots WHERE owner_id = ? AND is_active = 1');
+    return stmt.get(ownerId).count;
+  }
+
   getAllBots() {
     const stmt = this.db.prepare('SELECT * FROM bots ORDER BY created_at DESC');
     return stmt.all().map(bot => this.formatBot(bot));
   }
 
   updateBot(botId, updates) {
-    const setClause = Object.keys(updates).map(key => `${this.camelToSnake(key)} = ?`).join(', ');
-    const values = Object.values(updates);
+    // Convert boolean values to integers for SQLite
+    const sanitizedUpdates = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'boolean') {
+        sanitizedUpdates[key] = value ? 1 : 0;
+      } else {
+        sanitizedUpdates[key] = value;
+      }
+    }
+    
+    const setClause = Object.keys(sanitizedUpdates).map(key => `${this.camelToSnake(key)} = ?`).join(', ');
+    const values = Object.values(sanitizedUpdates);
     
     const stmt = this.db.prepare(`
       UPDATE bots 
@@ -269,6 +284,11 @@ class DatabaseService {
     );
   }
 
+  getBotConversations(botId) {
+    const stmt = this.db.prepare('SELECT * FROM conversations WHERE bot_id = ? ORDER BY start_time DESC');
+    return stmt.all(botId).map(conversation => this.formatConversation(conversation));
+  }
+
   // Message operations
   addMessage(messageData) {
     const stmt = this.db.prepare(`
@@ -330,6 +350,23 @@ class DatabaseService {
       ownerId: lawyer.owner_id,
       createdAt: lawyer.created_at,
       updatedAt: lawyer.updated_at
+    };
+  }
+
+  formatConversation(conversation) {
+    if (!conversation) return null;
+    return {
+      id: conversation.id,
+      botId: conversation.bot_id,
+      clientPhone: conversation.client_phone,
+      clientName: conversation.client_name,
+      status: conversation.status,
+      legalField: conversation.legal_field,
+      urgency: conversation.urgency,
+      startTime: conversation.start_time,
+      summary: conversation.summary,
+      createdAt: conversation.created_at,
+      updatedAt: conversation.updated_at
     };
   }
 

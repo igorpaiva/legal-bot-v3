@@ -81,7 +81,7 @@ export function requireBotCredits(req, res, next) {
       error: 'No available bot credits',
       availableCredits: req.user.getAvailableBotCredits(),
       totalCredits: req.user.botCredits,
-      usedCredits: req.user.usedBotCredits
+      usedCredits: req.user.getUsedBotCredits()
     });
   }
 

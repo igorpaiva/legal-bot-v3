@@ -3,17 +3,19 @@ import path from 'path';
 import pkg from 'whatsapp-web.js';
 const { MessageMedia } = pkg;
 import { formatPhoneForWhatsApp } from '../routes/lawyers.js';
+import DatabaseService from './DatabaseService.js';
 
 class LawyerNotificationService {
   constructor() {
-    this.LAWYERS_FILE = path.join(process.cwd(), 'data', 'lawyers.json');
+    this.databaseService = DatabaseService;
   }
 
-  // Load lawyers from file
+  // Load lawyers from database
   async loadLawyers() {
     try {
-      const data = await fs.readFile(this.LAWYERS_FILE, 'utf8');
-      return JSON.parse(data);
+      // Get all lawyers from database - for now return empty array if no lawyers exist
+      // This can be enhanced when lawyers are added to the database
+      return [];
     } catch (error) {
       console.error('Error loading lawyers:', error);
       return [];

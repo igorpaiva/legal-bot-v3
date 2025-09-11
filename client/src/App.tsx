@@ -23,6 +23,7 @@ import Dashboard from './components/Dashboard';
 import BotManager from './components/BotManager';
 import Reports from './components/Reports';
 import Lawyers from './components/Lawyers';
+import GoogleDrive from './components/GoogleDrive';
 import AdminDashboard from './components/AdminDashboard';
 import Login from './components/Login';
 import { Bot, SystemStatus } from './types';
@@ -221,7 +222,8 @@ function App() {
         { label: 'Dashboard', key: 'dashboard' },
         { label: 'Gerenciar Bots', key: 'bots' },
         { label: 'Relatórios', key: 'reports' },
-        { label: 'Advogados', key: 'lawyers' }
+        { label: 'Advogados', key: 'lawyers' },
+        { label: 'Google Drive', key: 'google-drive' }
       ];
     } else if (user?.role === 'admin') {
       return [
@@ -328,6 +330,10 @@ function App() {
 
               {getCurrentTabKey() === 'lawyers' && (
                 <Lawyers />
+              )}
+
+              {getCurrentTabKey() === 'google-drive' && (
+                <GoogleDrive />
               )}
             </>
           )}

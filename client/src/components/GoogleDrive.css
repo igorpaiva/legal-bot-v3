@@ -1,0 +1,343 @@
+.google-drive-container {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.google-drive-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.google-drive-header h2 {
+  color: #1a73e8;
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.google-drive-header p {
+  color: #5f6368;
+  font-size: 1.1rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.loading {
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+.spinner {
+  border: 3px solid #f3f4f6;
+  border-top: 3px solid #1a73e8;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.auth-section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.auth-card {
+  background: white;
+  border-radius: 12px;
+  padding: 3rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  text-align: center;
+  max-width: 450px;
+  width: 100%;
+}
+
+.auth-icon {
+  margin-bottom: 1.5rem;
+}
+
+.auth-icon svg {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  display: block;
+}
+
+.auth-card h3 {
+  font-size: 1.75rem;
+  color: #1f2937;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.auth-card p {
+  color: #6b7280;
+  margin-bottom: 2rem;
+  line-height: 1.6;
+}
+
+.error-message {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.connect-button {
+  background: #1a73e8;
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.connect-button:hover:not(:disabled) {
+  background: #1557b0;
+  transform: translateY(-1px);
+}
+
+.connect-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button-spinner {
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+.connected-section {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.status-indicator {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.status-indicator.connected {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.status-text h3 {
+  font-size: 1.5rem;
+  color: #1f2937;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+.status-text p {
+  color: #6b7280;
+  margin: 0;
+}
+
+.drive-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.user-info,
+.storage-info,
+.features-info {
+  background: #f9fafb;
+  padding: 1.5rem;
+  border-radius: 8px;
+}
+
+.user-info h4,
+.storage-info h4,
+.features-info h4 {
+  font-size: 1.1rem;
+  color: #1f2937;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.info-row:last-child {
+  margin-bottom: 0;
+}
+
+.info-row .label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.info-row .value {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.storage-bar {
+  background: #e5e7eb;
+  height: 8px;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+
+.storage-fill {
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.storage-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.usage-text {
+  color: #6b7280;
+}
+
+.usage-percentage {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #6b7280;
+}
+
+.feature-item svg {
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  padding-top: 2rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.disconnect-button,
+.refresh-button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.disconnect-button {
+  background: #dc2626;
+  color: white;
+}
+
+.disconnect-button:hover {
+  background: #b91c1c;
+  transform: translateY(-1px);
+}
+
+.refresh-button {
+  background: white;
+  color: #6b7280;
+  border-color: #d1d5db;
+}
+
+.refresh-button:hover {
+  background: #f9fafb;
+  color: #1f2937;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 768px) {
+  .google-drive-container {
+    padding: 1rem;
+  }
+
+  .google-drive-header h2 {
+    font-size: 2rem;
+  }
+
+  .auth-card {
+    padding: 2rem;
+  }
+
+  .drive-info {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-status {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .disconnect-button,
+  .refresh-button {
+    width: 100%;
+  }
+}

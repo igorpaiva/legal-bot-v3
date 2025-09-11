@@ -6,6 +6,7 @@ import DatabaseService from './DatabaseService.js';
 export class UserService {
   constructor() {
     this.SALT_ROUNDS = 12;
+    this.databaseService = DatabaseService; // Use the singleton instance
     this.initializeDefaultAdmin();
   }
 
@@ -63,12 +64,14 @@ export class UserService {
 
   // Get user by email
   async getUserByEmail(email) {
-    return DatabaseService.getUserByEmail(email);
+    const userData = DatabaseService.getUserByEmail(email);
+    return userData ? User.fromJSON(userData, this.databaseService) : null;
   }
 
   // Get user by ID
   async getUserById(id) {
-    return DatabaseService.getUserById(id);
+    const userData = DatabaseService.getUserById(id);
+    return userData ? User.fromJSON(userData, this.databaseService) : null;
   }
 
   // Authenticate user

@@ -1,46 +1,34 @@
 export class User {
-  constructor(data = {}) {
+  constructor(data = {}, databaseService = null) {
     this.id = data.id;
     this.email = data.email;
     this.password = data.password; // Will be hashed
     this.role = data.role || 'law_office'; // 'admin' or 'law_office'
     this.lawOfficeName = data.lawOfficeName;
     this.botCredits = data.botCredits || (data.role === 'law_office' ? 1 : 0);
-    this.usedBotCredits = data.usedBotCredits || 0;
     this.isActive = data.isActive !== undefined ? data.isActive : true;
     this.createdAt = data.createdAt || new Date().toISOString();
     this.updatedAt = data.updatedAt || new Date().toISOString();
     this.createdBy = data.createdBy; // Admin ID who created this account
+    this._databaseService = databaseService;
+  }
+
+  // Get used bot credits from database
+  getUsedBotCredits() {
+    if (this._databaseService) {
+      return this._databaseService.getUserBotCount(this.id);
+    }
+    return 0; // Fallback if no database service available
   }
 
   // Calculate available bot credits
   getAvailableBotCredits() {
-    return Math.max(0, this.botCredits - this.usedBotCredits);
+    return Math.max(0, this.botCredits - this.getUsedBotCredits());
   }
 
   // Check if user can create a new bot
   canCreateBot() {
     return this.getAvailableBotCredits() > 0;
-  }
-
-  // Use a bot credit
-  useBotCredit() {
-    if (this.canCreateBot()) {
-      this.usedBotCredits += 1;
-      this.updatedAt = new Date().toISOString();
-      return true;
-    }
-    return false;
-  }
-
-  // Return a bot credit (when bot is deleted)
-  returnBotCredit() {
-    if (this.usedBotCredits > 0) {
-      this.usedBotCredits -= 1;
-      this.updatedAt = new Date().toISOString();
-      return true;
-    }
-    return false;
   }
 
   // Add bot credits (admin action)
@@ -58,7 +46,6 @@ export class User {
       role: this.role,
       lawOfficeName: this.lawOfficeName,
       botCredits: this.botCredits,
-      usedBotCredits: this.usedBotCredits,
       isActive: this.isActive,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
@@ -67,8 +54,8 @@ export class User {
   }
 
   // Create from JSON
-  static fromJSON(data) {
-    return new User(data);
+  static fromJSON(data, databaseService = null) {
+    return new User(data, databaseService);
   }
 
   // Validation
