@@ -11,6 +11,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Google Drive authentication tokens
+config/google-tokens.json
+
 # WhatsApp session data
 .wwebjs_auth/
 .wwebjs_cache/
