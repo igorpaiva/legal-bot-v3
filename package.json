@@ -9,7 +9,9 @@
     "dev": "nodemon server.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "dev:full": "concurrently \"npm run dev\" \"npm run client\""
+    "dev:full": "concurrently \"npm run dev\" \"npm run client\"",
+    "clean:empty": "./remove-empty-files.sh",
+    "clean:db": "./clean_system.sh"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

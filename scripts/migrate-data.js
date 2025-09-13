@@ -157,34 +157,69 @@ class DataMigration {
       const conversationsFile = path.join(this.dataDir, 'conversations.json');
       
       if (await this.fileExists(conversationsFile)) {
-        const conversationsData = JSON.parse(await fs.readFile(conversationsFile, 'utf-8'));
+        const rawData = JSON.parse(await fs.readFile(conversationsFile, 'utf-8'));
+        
+        // Handle different JSON structures
+        let conversationsData;
+        if (Array.isArray(rawData)) {
+          // Old format: direct array
+          conversationsData = rawData;
+        } else if (rawData.conversations) {
+          // New format: object with conversations property
+          conversationsData = Object.values(rawData.conversations);
+        } else {
+          console.log('💬 No conversations found in JSON structure');
+          return;
+        }
+        
+        if (!Array.isArray(conversationsData) || conversationsData.length === 0) {
+          console.log('💬 No conversations to migrate');
+          return;
+        }
         
         for (const conversation of conversationsData) {
           try {
+            // Ensure we have a valid bot_id
+            let botId = conversation.botId;
+            if (!botId) {
+              botId = this.getOrCreateDefaultBot();
+              if (!botId) {
+                console.error(`  ❌ Skipping conversation ${conversation.id}: No bot available`);
+                continue;
+              }
+            }
+
             DatabaseService.createConversation({
               id: conversation.id || uuidv4(),
-              botId: conversation.botId,
-              clientPhone: conversation.clientPhone,
-              clientName: conversation.clientName,
+              botId: botId,
+              clientPhone: conversation.client?.phone || conversation.clientPhone,
+              clientName: conversation.client?.name || conversation.clientName,
               status: conversation.status || 'active',
               legalField: conversation.legalField,
               urgency: conversation.urgency,
-              startTime: conversation.startTime,
+              startTime: conversation.startedAt || conversation.startTime,
               summary: conversation.summary
             });
 
-            // Migrate messages for this conversation
+            // Migrate messages for this conversation - handle both old and new formats
+            let messagesArray = [];
             if (conversation.messages && Array.isArray(conversation.messages)) {
-              for (const message of conversation.messages) {
+              messagesArray = conversation.messages;
+            } else if (rawData.messages && rawData.messages[conversation.id]) {
+              messagesArray = rawData.messages[conversation.id];
+            }
+            
+            if (messagesArray.length > 0) {
+              for (const message of messagesArray) {
                 try {
                   DatabaseService.addMessage({
                     id: uuidv4(),
                     conversationId: conversation.id,
-                    sender: message.isFromBot ? 'bot' : 'client',
-                    messageText: message.text,
+                    sender: message.isFromBot || message.direction === 'OUT' ? 'bot' : 'client',
+                    messageText: message.text || message.body,
                     messageType: message.type || 'text',
                     timestamp: message.timestamp,
-                    isFromBot: message.isFromBot || false
+                    isFromBot: message.isFromBot || message.direction === 'OUT' || false
                   });
                 } catch (msgError) {
                   console.error(`    ❌ Failed to migrate message:`, msgError);
@@ -192,7 +227,7 @@ class DataMigration {
               }
             }
 
-            console.log(`  ✓ Migrated conversation: ${conversation.id} (${conversation.messages?.length || 0} messages)`);
+            console.log(`  ✓ Migrated conversation: ${conversation.id} (${messagesArray.length} messages)`);
           } catch (error) {
             if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
               console.log(`  ⚠️  Conversation already exists: ${conversation.id}`);
@@ -253,6 +288,41 @@ class DataMigration {
       return lawOffices[0].id;
     }
     return null;
+  }
+
+  getOrCreateDefaultBot() {
+    try {
+      // Try to get existing bots
+      const bots = DatabaseService.getAllBots();
+      if (bots.length > 0) {
+        return bots[0].id;
+      }
+
+      // No bots exist, create a default one
+      const defaultOwnerId = this.getRandomLawOfficeId();
+      if (!defaultOwnerId) {
+        throw new Error('No law office found to assign default bot');
+      }
+
+      const defaultBotId = uuidv4();
+      DatabaseService.createBot({
+        id: defaultBotId,
+        name: 'Bot Padrão',
+        assistantName: 'Ana',
+        ownerId: defaultOwnerId,
+        status: 'waiting_for_scan',
+        phoneNumber: null,
+        isActive: true,
+        messageCount: 0,
+        lastActivity: null
+      });
+
+      console.log(`🤖 Created default bot: ${defaultBotId}`);
+      return defaultBotId;
+    } catch (error) {
+      console.error('Error getting/creating default bot:', error);
+      return null;
+    }
   }
 
   // Run migration

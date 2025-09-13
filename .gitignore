@@ -95,3 +95,25 @@ client/build/
 .idea/
 *.swp
 *.swo
+
+# Clear system
+*clean_system.sh
+*clear_db.sql
+*remove-empty-files.sh
+
+# Temporary and auto-generated files
+*.tmp
+*.temp
+temp/
+check-oauth.sh
+test-oauth.js
+.env.*template*
+
+# Google Drive setup duplicates
+client/src/components/GoogleDriveSetup.jsx
+
+# Database migrations (empty)
+database/migrations/003_google_drive_integration.sql
+
+# Documentation (if empty)
+docs/GOOGLE_DRIVE_*.md

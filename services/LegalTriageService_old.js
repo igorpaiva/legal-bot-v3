@@ -319,8 +319,6 @@ ${question}`;
 
 *📄 Documentos Necessários:* ${analysis.legal_solution.required_documents}
 
-*💰 Estimativa de Custos:* ${analysis.legal_solution.estimated_costs}
-
 *⚠️ Riscos e Alternativas:* ${analysis.legal_solution.risks_and_alternatives}
 `;
     }
@@ -518,9 +516,7 @@ SCHEMA OBRIGATÓRIO:
     "legal_basis": "string - leis, códigos e artigos aplicáveis específicos",
     "recommended_actions": "string - procedimentos recomendados passo a passo",
     "success_probability": "string - análise da probabilidade de sucesso com justificativa",
-    "timeline": "string - cronograma estimado das principais fases",
     "required_documents": "string - documentos e provas necessárias",
-    "estimated_costs": "string - estimativa de custos processuais e honorários",
     "risks_and_alternatives": "string - riscos processuais e alternativas extrajudiciais"
   }
 }
@@ -536,8 +532,6 @@ DIRETRIZES PARA SOLUÇÕES JURÍDICAS DETALHADAS:
 - Desenvolva estratégia jurídica completa com fundamentação doutrinária
 - Inclua análise de riscos processuais e contraproducência
 - Sugira tanto soluções judiciais quanto extrajudiciais com detalhamento
-- Avalie custos-benefício detalhado considerando todas as variáveis
-- Inclua cronograma realista com marcos processuais importantes
 - Considere aspectos práticos como documentação, perícias e testemunhas
 - Analise precedentes jurisprudenciais específicos e tendências atuais
 - Desenvolva estratégias de negociação quando aplicável
@@ -578,9 +572,7 @@ Retorne apenas o JSON:`;
         legal_basis: 'Legislação brasileira aplicável ao caso específico conforme análise especializada.',
         recommended_actions: 'Consulta presencial para análise completa da documentação e viabilidade jurídica.',
         success_probability: 'A definir após análise detalhada dos documentos e circunstâncias específicas.',
-        timeline: 'Prazo estimado após avaliação inicial e estratégia definida.',
         required_documents: 'Documentos relacionados ao caso conforme orientação especializada.',
-        estimated_costs: 'Orçamento personalizado após avaliação inicial do caso.',
         risks_and_alternatives: 'Análise de riscos e alternativas a serem apresentadas em consulta especializada.'
       }
     };
@@ -635,9 +627,7 @@ Retorne apenas o JSON:`;
         legal_basis: 'Legislação brasileira aplicável ao caso específico',
         recommended_actions: 'Consulta presencial para análise detalhada',
         success_probability: 'A definir após análise completa',
-        timeline: 'Prazo estimado após consulta inicial',
         required_documents: 'Documentos relacionados ao caso',
-        estimated_costs: 'Orçamento após avaliação inicial',
         risks_and_alternatives: 'Riscos e alternativas a serem avaliados'
       }
     });
