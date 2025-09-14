@@ -181,7 +181,6 @@ export class ConversationFlowService {
             conv.client && 
             conv.client.phone === client.phone && 
             conv.state === 'COMPLETED') {
-          
           console.log(`[DEBUG] findOrCreateActiveConversation - Found COMPLETED conversation for post-service message: ${id}`);
           return conv;
         }
@@ -237,6 +236,23 @@ export class ConversationFlowService {
     const singleResponseStates = ['COLLECTING_NAME', 'COLLECTING_EMAIL', 'COLLECTING_STRATEGIC_INFO'];
     if (singleResponseStates.includes(conversation.state)) {
       return false;
+    }
+
+    // Check if this is a document message - always wait for more documents
+    const isDocumentMessage = messageText.includes('[DOCUMENTO') || 
+                             messageText.includes('[PDF') ||
+                             messageText.includes('[ARQUIVO') ||
+                             messageText.includes('[IMAGEM') ||
+                             messageText.includes('[VIDEO') ||
+                             messageText.toLowerCase().includes('[documento]') ||
+                             messageText.toLowerCase().includes('[pdf]') ||
+                             messageText.toLowerCase().includes('[arquivo]') ||
+                             messageText.toLowerCase().includes('[imagem]') ||
+                             messageText.toLowerCase().includes('[video]');
+    
+    if (isDocumentMessage) {
+      console.log(`[BURST] Document message, waiting for more documents: "${messageText}"`);
+      return true;
     }
 
     // Wait for bursts in states where detailed information is expected
@@ -772,6 +788,10 @@ Responda APENAS com sua mensagem:`;
     if (userMessages.length >= 6) {
       console.log('Auto-finalizing conversation due to too many exchanges');
       conversation.state = 'COMPLETED';
+      
+      // Update database
+      await this.updateConversationInDatabase(conversation);
+      
       // Save the triage analysis if available
       if (conversation.analysis) {
         this.saveTriageAnalysis(conversation, conversation.analysis);
@@ -1059,6 +1079,9 @@ Responda APENAS com sua mensagem:`;
     
     conversation.state = 'COMPLETED';
     
+    // Update database
+    await this.updateConversationInDatabase(conversation);
+    
     // Generate final comprehensive analysis (stored for admin only)
     const allMessages = this.getAllConversationText(conversation);
     const finalTriage = await this.triageService.triageFromText(allMessages, client.phone, this.groqService);
@@ -1129,21 +1152,28 @@ Responda APENAS com sua mensagem:`;
     
     console.log(`[DEBUG] handlePostServiceMessage - Client: ${client.phone}, Message: "${messageText}"`);
     
+    // Count how many documents were sent in this burst
+    const documentCount = (messageText.match(/\[DOCUMENTO|\[PDF|\[ARQUIVO|\[IMAGEM|\[VIDEO/gi) || []).length;
+    const isMultipleDocuments = documentCount > 1;
+    
     // Detect if message is only media/documents (no text content)
     const isOnlyMedia = !messageText || messageText.trim().length === 0 || 
                        messageText.toLowerCase().includes('[documento]') ||
                        messageText.toLowerCase().includes('[foto]') ||
                        messageText.toLowerCase().includes('[pdf]') ||
-                       messageText.toLowerCase().includes('[arquivo]');
+                       messageText.toLowerCase().includes('[arquivo]') ||
+                       messageText.toLowerCase().includes('[imagem]') ||
+                       messageText.toLowerCase().includes('[video]');
     
     if (isOnlyMedia) {
       // Handle pure media uploads without text
-      const mediaPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} enviou documentos/arquivos após o atendimento ter sido finalizado.
+      const documentsText = isMultipleDocuments ? `${documentCount} documentos` : 'documentos';
+      const mediaPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} enviou ${documentsText} após o atendimento ter sido finalizado.
 
 TAREFA: Agradecer pelos documentos e confirmar que foram guardados.
 
 INSTRUÇÕES:
-- Agradeça pelos documentos
+- Agradeça pelos documentos${isMultipleDocuments ? ' (' + documentCount + ' arquivos)' : ''}
 - Confirme que foram adicionados ao processo dele
 - Seja breve e profissional
 - Use o nome ${firstName} se disponível
@@ -1166,22 +1196,55 @@ Responda APENAS com sua mensagem:`;
                              lowerText.includes('comprovante');
     
     if (isDocumentMessage) {
-      // Handle document-related messages
-      const documentPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} mencionou documentos após o atendimento: "${messageText}"
+      // Handle document-related messages - check if they actually sent docs or just mentioned them
+      const actuallyHasDocument = messageText.includes('[DOCUMENTO') ||
+                                 messageText.includes('[PDF') ||
+                                 messageText.includes('[ARQUIVO') ||
+                                 messageText.includes('[IMAGEM') ||
+                                 messageText.includes('[VIDEO') ||
+                                 lowerText.includes('[documento]') ||
+                                 lowerText.includes('[pdf]') ||
+                                 lowerText.includes('[arquivo]') ||
+                                 lowerText.includes('[imagem]') ||
+                                 lowerText.includes('[video]');
+      
+      if (actuallyHasDocument) {
+        // Count documents sent
+        const documentCount = (messageText.match(/\[DOCUMENTO|\[PDF|\[ARQUIVO|\[IMAGEM|\[VIDEO/gi) || []).length;
+        const isMultiple = documentCount > 1;
+        
+        // They actually sent a document - just thank them
+        const documentsText = isMultiple ? `${documentCount} documentos` : 'documentos';
+        const documentPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} enviou ${documentsText} após o atendimento ter sido finalizado.
+
+TAREFA: Agradecer pelos documentos enviados.
+
+INSTRUÇÕES:
+- Agradeça pelos documentos recebidos${isMultiple ? ' (' + documentCount + ' arquivos)' : ''}
+- Confirme que foram adicionados ao processo dele
+- Seja breve e profissional (máximo 1-2 frases)
+- Use o nome ${firstName}
+- NÃO mencione aguardar mais nada - apenas agradeça pelo que foi enviado
+
+Responda APENAS com sua mensagem:`;
+
+        return await this.groqService.generateResponse(documentPrompt);
+      } else {
+        // They mentioned documents but didn't send any - ask them to send
+        const documentPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} mencionou documentos mas não enviou ainda: "${messageText}"
 
 TAREFA: Responder sobre os documentos de forma útil e direta.
 
 INSTRUÇÕES:
-- Se está enviando documentos, agradeça e diga que fica no aguardo do envio
-- Se está perguntando sobre documentos, oriente de forma simples
-- Seja concisa e direta - máximo 2 frases
+- Peça para enviar os documentos pelo WhatsApp
+- Seja concisa e direta (máximo 1-2 frases)
 - Use o nome ${firstName}
-- Não mencione email ou outras formas de envio - apenas aguarde o envio pelo WhatsApp
 - Seja empática e profissional
 
 Responda APENAS com sua mensagem:`;
 
-      return await this.groqService.generateResponse(documentPrompt);
+        return await this.groqService.generateResponse(documentPrompt);
+      }
     }
     
     // Detect greeting messages
@@ -1468,6 +1531,44 @@ Responda APENAS com sua mensagem:`;
       'baixa': 'Até 5 dias úteis'
     };
     return timeframes[urgency] || timeframes['baixa'];
+  }
+
+  // Database update methods
+  async updateConversationInDatabase(conversation) {
+    if (!this.botManager || !this.botManager.database) {
+      console.warn('[WARNING] updateConversationInDatabase - Database not available');
+      return;
+    }
+
+    try {
+      // Map conversation state to database status
+      let dbStatus = 'active';
+      if (conversation.state === 'COMPLETED') {
+        dbStatus = 'completed';
+      } else if (conversation.state === 'ABANDONED') {
+        dbStatus = 'abandoned';
+      }
+
+      const endTime = conversation.state === 'COMPLETED' ? new Date().toISOString() : null;
+      
+      await this.botManager.database.run(
+        `UPDATE conversations 
+         SET status = ?, end_time = ?, summary = ?, legal_field = ?, urgency = ?
+         WHERE id = ?`,
+        [
+          dbStatus,
+          endTime,
+          conversation.analysis?.case?.description || null,
+          conversation.analysis?.case?.category || null,
+          conversation.analysis?.case?.urgency || null,
+          conversation.id.toString()
+        ]
+      );
+      
+      console.log(`[DEBUG] Updated conversation ${conversation.id} in database: status=${dbStatus}`);
+    } catch (error) {
+      console.error('Error updating conversation in database:', error);
+    }
   }
 
   // Persistence methods
@@ -1832,29 +1933,60 @@ Responda APENAS com sua mensagem:`;
   async offerComplementOption(conversation) {
     const firstName = conversation.client.name?.split(' ')[0] || 'cliente';
     
+    // MARK CASE AS COMPLETED IMMEDIATELY and generate report
+    conversation.state = 'COMPLETED';
+    
+    // Update database
+    await this.updateConversationInDatabase(conversation);
+    
+    // Save the triage analysis 
+    if (conversation.analysis) {
+      this.saveTriageAnalysis(conversation, conversation.analysis);
+    }
+    
+    // Send PDF notification to lawyer immediately
+    console.log(`[DEBUG] offerComplementOption - Marking case as COMPLETED and sending notification`);
+    if (this.botManager && conversation.analysis) {
+      try {
+        console.log(`Case completed for ${conversation.client.name || conversation.client.phone}. Sending notification to lawyer...`);
+        await LawyerNotificationService.notifyLawyerCaseCompleted(this.botManager, conversation);
+      } catch (error) {
+        console.error('Error sending lawyer notification:', error);
+      }
+    }
+    
     // Get the conversation history to understand the emotional context
     const conversationMessages = conversation.conversationHistory || [];
     const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
+    
+    // Extract required documents from analysis
+    const requiredDocs = conversation.analysis?.legal_solution?.required_documents || '';
+    const documentsSection = requiredDocs ? `\n\n📋 *DOCUMENTOS NECESSÁRIOS:*\n${requiredDocs}` : '';
     
     const offerPrompt = `Você é Ana, assistente jurídica empática. Você acabou de coletar as informações necessárias do cliente ${firstName}.
 
 HISTÓRIA COMPARTILHADA PELO CLIENTE:
 "${allUserMessages}"
 
-SITUAÇÃO: Você acabou de ouvir a história do cliente e coletou as informações específicas. Agora precisa:
-1. Oferecer uma mensagem de apoio genuína e natural
-2. Dar a oportunidade de complementar com mais detalhes
-3. Indicar que o caso será analisado por um advogado
+DOCUMENTOS NECESSÁRIOS IDENTIFICADOS:
+${requiredDocs || 'Não identificados ainda'}
+
+SITUAÇÃO: Você acabou de ouvir a história do cliente e coletou as informações específicas. O caso já foi registrado e enviado para análise do advogado. Agora precisa:
+1. Informar que o caso foi registrado e está sendo encaminhado
+2. Listar os documentos necessários que foram identificados (se houver)
+3. Dar a oportunidade de complementar com mais detalhes se quiser
+4. Mencionar que o advogado especialista já está analisando
 
 INSTRUÇÕES:
 - Seja genuinamente empática, mas de forma natural (não robótica)
 - Reconheça brevemente a situação difícil se apropriado
-- Mencione que o advogado especialista cuidará do caso
-- Ofereça a oportunidade de adicionar mais detalhes
+- Informe que o caso foi registrado e enviado para o advogado
+- SE houver documentos necessários identificados, liste-os de forma clara e organizada
+- Ofereça a oportunidade de adicionar mais detalhes se desejar
 - Use linguagem calorosa mas profissional
 - NÃO seja excessivamente dramática ou repetitiva
 
-FORMATO: Uma mensagem empática mas equilibrada.
+FORMATO: Uma mensagem empática mas equilibrada informando que o caso foi registrado e incluindo os documentos necessários.
 
 Responda APENAS com sua mensagem:`;
 
@@ -1881,9 +2013,8 @@ Responda APENAS com sua mensagem:`;
                        lowerText.length < 10;
 
     if (isFinishing) {
-      // Client is done, complete the conversation
-      conversation.state = 'COMPLETED';
-      return await this.completeTriageWithEmpathy(conversation);
+      // Client is done - case is already COMPLETED, just acknowledge
+      return await this.acknowledgeCompletion(conversation);
     } else {
       // Client has more details to add
       // Add this message to conversation history
@@ -1898,7 +2029,7 @@ Responda APENAS com sua mensagem:`;
         isComplement: true // Mark as complement information
       });
 
-      // Update the analysis with the new information
+      // Update the analysis with the new information and notify lawyer about update
       const allUserMessages = conversation.conversationHistory
         .filter(msg => msg.role === 'user')
         .map(msg => msg.content)
@@ -1914,23 +2045,43 @@ Responda APENAS com sua mensagem:`;
           case: {
             ...conversation.analysis.case,
             ...updatedAnalysis.case,
-            complemented: true // Mark that it was complemented
+            complemented: true,
+            lastUpdated: new Date().toISOString()
           }
         };
+        
+        // Save updated analysis
+        this.saveTriageAnalysis(conversation, conversation.analysis);
+        
+        // Send updated report to lawyer if significant new information
+        if (this.botManager && this.isSignificantUpdate(messageText)) {
+          try {
+            console.log(`Case updated with additional information for ${conversation.client.name || conversation.client.phone}. Sending update to lawyer...`);
+            await LawyerNotificationService.notifyLawyerCaseUpdated(this.botManager, conversation, messageText);
+          } catch (error) {
+            console.error('Error sending lawyer update notification:', error);
+          }
+        }
       }
 
       // Ask if they have anything else to add
+      const updatedRequiredDocs = conversation.analysis?.legal_solution?.required_documents || '';
+      
       const complementPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${client.name} acabou de fornecer informações adicionais sobre seu caso.
 
 NOVA INFORMAÇÃO RECEBIDA: "${messageText}"
 
-TAREFA: Reconhecer as informações adicionais e perguntar se há mais alguma coisa importante.
+DOCUMENTOS NECESSÁRIOS ATUALIZADOS:
+${updatedRequiredDocs || 'Ainda sendo analisados'}
+
+SITUAÇÃO: O caso já está registrado e sendo analisado pelo advogado, mas o cliente forneceu informações adicionais que foram registradas.
 
 INSTRUÇÕES:
 - Agradeça pelas informações complementares
+- Confirme que foram adicionadas ao caso
+- SE os documentos necessários foram atualizados/identificados, mencione brevemente
 - Seja breve e natural
 - Pergunte se há mais algum detalhe importante que queira adicionar
-- Ou se está tudo ok para prosseguir
 - Use linguagem calorosa mas objetiva
 
 Responda APENAS com sua mensagem:`;
@@ -2001,6 +2152,50 @@ Responda APENAS com sua mensagem:`;
     }
 
     return response;
+  }
+
+  /**
+   * Acknowledge completion when client says they're done
+   */
+  async acknowledgeCompletion(conversation) {
+    const firstName = conversation.client.name?.split(' ')[0] || 'cliente';
+    
+    const acknowledgmentPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} indicou que terminou de fornecer informações.
+
+SITUAÇÃO: O caso já foi registrado e enviado para análise do advogado. O cliente confirmou que não tem mais nada a acrescentar.
+
+TAREFA: Agradecer e confirmar que tudo está sendo acompanhado.
+
+INSTRUÇÕES:
+- Agradeça pela confiança
+- Confirme que o caso está sendo analisado
+- Informe que o advogado entrará em contato em breve
+- Seja calorosa e tranquilizadora
+- Use linguagem empática mas profissional
+
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(acknowledgmentPrompt);
+  }
+
+  /**
+   * Check if the additional information is significant enough to warrant an update notification
+   */
+  isSignificantUpdate(messageText) {
+    const text = messageText.toLowerCase();
+    
+    // Consider significant if it contains important legal keywords or is substantial
+    const significantKeywords = [
+      'documento', 'contrato', 'testemunha', 'prova', 'evidência',
+      'valor', 'data', 'prazo', 'urgente', 'grave', 'sério',
+      'médico', 'laudo', 'exame', 'atestado', 'relatório',
+      'ameaça', 'demissão', 'rescisão', 'processo', 'ação'
+    ];
+    
+    const hasSignificantKeywords = significantKeywords.some(keyword => text.includes(keyword));
+    const isSubstantialLength = messageText.length > 50;
+    
+    return hasSignificantKeywords || isSubstantialLength;
   }
 
 }

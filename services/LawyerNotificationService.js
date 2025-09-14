@@ -174,6 +174,50 @@ _Enviado automaticamente pelo sistema V3_`;
     }
   }
 
+  // Send notification when a case is updated with new information
+  async notifyLawyerCaseUpdated(botManager, conversation, updateMessage) {
+    try {
+      const specialty = this.identifySpecialty(conversation.analysis);
+      const lawyers = await this.getLawyersBySpecialty();
+      
+      if (!lawyers[specialty] || lawyers[specialty].length === 0) {
+        console.warn(`No lawyers found for specialty: ${specialty}`);
+        return false;
+      }
+
+      const urgency = conversation.analysis?.case?.urgency || 'baixa';
+      const urgencyEmoji = urgency === 'alta' ? '🔴' : urgency === 'média' ? '🟡' : '🟢';
+      
+      const message = `${urgencyEmoji} *ATUALIZAÇÃO DE CASO*\n\n` +
+        `📋 *Caso:* ${conversation.id}\n` +
+        `👤 *Cliente:* ${conversation.client.name}\n` +
+        `📞 *Telefone:* ${conversation.client.phone}\n` +
+        `⚖️ *Especialidade:* ${specialty}\n` +
+        `🔥 *Urgência:* ${urgency}\n` +
+        `📅 *Iniciado:* ${new Date(conversation.startedAt).toLocaleString('pt-BR')}\n\n` +
+        `📝 *Nova informação adicionada:*\n${updateMessage}\n\n` +
+        `💡 *Acesse o painel administrativo para mais detalhes*`;
+
+      // Send to appropriate lawyers for this specialty
+      let sent = false;
+      for (const lawyer of lawyers[specialty]) {
+        try {
+          await botManager.sendMessage(lawyer.phone, message);
+          console.log(`Case update notification sent to lawyer: ${lawyer.name} (${lawyer.phone})`);
+          sent = true;
+        } catch (error) {
+          console.error(`Failed to send update notification to lawyer ${lawyer.name}:`, error);
+        }
+      }
+
+      return sent;
+
+    } catch (error) {
+      console.error('Error notifying lawyer of case update:', error);
+      return false;
+    }
+  }
+
   // Send notification when a case is completed
   async notifyLawyerCaseCompleted(botManager, conversation) {
     try {

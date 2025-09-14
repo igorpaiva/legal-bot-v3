@@ -420,12 +420,6 @@ export class BotManager {
   async handleMessage(botData, message) {
     if (!botData.isActive) return;
 
-    // Check if bot is currently processing a message (rate limiting)
-    if (botData.isProcessing) {
-      console.log(`Bot ${botData.id} is already processing a message, skipping`);
-      return;
-    }
-
     // Get chat info early to check cooldown BEFORE setting processing flag
     let chat, chatId;
     try {
@@ -446,13 +440,24 @@ export class BotManager {
       botData.lastMessageTimes = new Map();
     }
     
+    // Check if this is a media message (used in multiple places)
+    const isMediaMessage = message.type === 'document' || message.type === 'image' || message.type === 'audio' || message.type === 'video';
+    
+    // Check if bot is currently processing a message (rate limiting)
+    // Allow document/media messages to be processed even when bot is busy
+    if (botData.isProcessing && !isMediaMessage) {
+      console.log(`Bot ${botData.id} is already processing a message, skipping`);
+      return;
+    }
+    
     // Only apply cooldown if:
     // 1. User sent messages very rapidly (less than 2 seconds apart) AND
-    // 2. Bot recently responded (less than 3 seconds ago)
+    // 2. Bot recently responded (less than 3 seconds ago) AND
+    // 3. It's not a document/media message (allow documents to be processed immediately)
     const messageTooFast = (now - lastMessageTime) < 2000; // Messages less than 2 seconds apart
     const botRecentlyResponded = lastResponseTime && (now - lastResponseTime) < 3000; // Bot responded less than 3 seconds ago
     
-    if (messageTooFast && botRecentlyResponded) {
+    if (messageTooFast && botRecentlyResponded && !isMediaMessage) {
       const remainingCooldown = Math.ceil((3000 - (now - lastResponseTime)) / 1000);
       console.log(`Bot ${botData.id} - Chat ${chatId} rate limited for ${remainingCooldown} more seconds (spam prevention)`);
       return; // Prevent spam but allow normal conversation flow
@@ -462,7 +467,10 @@ export class BotManager {
     botData.lastMessageTimes.set(chatId, now);
 
     // Set processing flag AFTER cooldown check to prevent getting stuck
-    botData.isProcessing = true;
+    // Don't set processing flag for media messages to allow multiple uploads
+    if (!isMediaMessage) {
+      botData.isProcessing = true;
+    }
 
     try {
 
@@ -567,12 +575,12 @@ export class BotManager {
           // Upload to Google Drive (if authenticated)
           await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'image');
           
-          // Create a text message indicating image was received
-          messageText = 'Recebi sua imagem. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          // Use tag format similar to documents
+          messageText = '[IMAGEM ANEXADA]';
           console.log(`Bot ${botData.id} - Image processed and uploaded to Google Drive`);
         } catch (error) {
           console.error(`Bot ${botData.id} - Error processing image:`, error);
-          messageText = 'Recebi sua imagem. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          messageText = '[IMAGEM ANEXADA]';
         }
       } else if (message.type === 'video') {
         // Handle video messages
@@ -585,12 +593,12 @@ export class BotManager {
           // Upload to Google Drive (if authenticated)
           await this.uploadMediaToGoogleDrive(botData, media, contactName, userPhone, 'video');
           
-          // Create a text message indicating video was received
-          messageText = 'Recebi seu vídeo. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          // Use tag format similar to documents
+          messageText = '[VIDEO ANEXADO]';
           console.log(`Bot ${botData.id} - Video processed and uploaded to Google Drive`);
         } catch (error) {
           console.error(`Bot ${botData.id} - Error processing video:`, error);
-          messageText = 'Recebi seu vídeo. Por favor, me conte mais sobre a situação que você gostaria de discutir.';
+          messageText = '[VIDEO ANEXADO]';
         }
       } else if (message.type === 'chat' && message.body) {
         // Handle regular text messages
@@ -683,8 +691,10 @@ export class BotManager {
         console.error(`Error sending fallback message for bot ${botData.id}:`, fallbackError);
       }
     } finally {
-      // Always clear processing flag
-      botData.isProcessing = false;
+      // Only clear processing flag for non-media messages (media messages don't set it)
+      if (!isMediaMessage) {
+        botData.isProcessing = false;
+      }
     }
   }
 
