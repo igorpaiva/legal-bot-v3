@@ -15,6 +15,7 @@ export class BotManager {
   constructor(io) {
     this.io = io;
     this.bots = new Map(); // Initialize the bots Map
+    this.initializingBots = new Set(); // Track bots being initialized to prevent conflicts
     
     // Load persisted bots on startup
     this.loadPersistedData();
@@ -188,24 +189,36 @@ export class BotManager {
     const botName = name || `Bot-${Date.now()}`;
     const defaultAssistantName = assistantName || 'Ana';
     
-    const client = new Client({
-      authStrategy: new LocalAuth({
-        clientId: botId,
-        dataPath: './sessions'
-      }),
-      puppeteer: {
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu'
-        ]
-      }
-    });
+    // Check if bot is already being initialized
+    if (this.initializingBots.has(botId)) {
+      console.log(`Bot ${botId} is already being initialized, skipping`);
+      return null;
+    }
+    
+    // Add to initializing set
+    this.initializingBots.add(botId);
+    
+    try {
+      console.log(`Creating new WhatsApp client for bot ${botId} with session path: ./sessions`);
+      
+      const client = new Client({
+        authStrategy: new LocalAuth({
+          clientId: botId,
+          dataPath: './sessions'
+        }),
+        puppeteer: {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+          ]
+        }
+      });
 
     const botData = {
       id: botId,
@@ -225,85 +238,153 @@ export class BotManager {
       chatCooldowns: new Map(), // Track last response time per chat to prevent spam
       lastMessageTimes: new Map(), // Track user message timing for spam prevention
       cooldownWarnings: new Map(), // Track cooldown warning messages to prevent spam
+      isRestoring: false, // Flag to indicate if bot is being restored
+      restorationTimeout: null, // Timeout handle for restoration attempts
+      restorationAttempts: 0, // Counter for restoration attempts
       conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName, this), // Pass assistant name and botManager to conversation service
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
       audioTranscriptionService: new AudioTranscriptionService(), // Add audio transcription service
       pdfProcessingService: new PdfProcessingService(), // Add PDF processing service
       googleDriveService: new GoogleDriveService() // Add Google Drive service
-    };
+      };
 
-    this.bots.set(botId, botData);
-    this.setupBotEvents(botData);
-    this.setupRetryCallbacks(botData);
-    
-    // Save bot to database
-    try {
-      DatabaseService.createBot({
-        id: botId,
-        name: botName,
-        assistantName: defaultAssistantName,
-        ownerId: ownerId,
-        status: 'initializing',
-        phoneNumber: null,
-        isActive: false,
-        messageCount: 0,
-        lastActivity: null
+      this.bots.set(botId, botData);
+      this.setupBotEvents(botData);
+      this.setupRetryCallbacks(botData);
+      
+      // Save bot to database
+      try {
+        DatabaseService.createBot({
+          id: botId,
+          name: botName,
+          assistantName: defaultAssistantName,
+          ownerId: ownerId,
+          status: 'initializing',
+          phoneNumber: null,
+          isActive: false,
+          messageCount: 0,
+          lastActivity: null
+        });
+      } catch (error) {
+        console.error(`Error saving bot to database:`, error);
+      }
+      
+      // Emit bot created event
+      this.io.emit('bot-created', {
+        id: botData.id,
+        name: botData.name,
+        status: botData.status,
+        phoneNumber: botData.phoneNumber,
+        isActive: botData.isActive,
+        messageCount: botData.messageCount,
+        lastActivity: botData.lastActivity,
+        createdAt: botData.createdAt,
+        qrCode: botData.qrCode,
+        error: botData.error
       });
-    } catch (error) {
-      console.error(`Error saving bot to database:`, error);
-    }
-    
-    // Emit bot created event
-    this.io.emit('bot-created', {
-      id: botData.id,
-      name: botData.name,
-      status: botData.status,
-      phoneNumber: botData.phoneNumber,
-      isActive: botData.isActive,
-      messageCount: botData.messageCount,
-      lastActivity: botData.lastActivity,
-      createdAt: botData.createdAt,
-      qrCode: botData.qrCode,
-      error: botData.error
-    });
-    
-    try {
+      
       await client.initialize();
       this.emitBotUpdate(botId);
       return botId;
     } catch (error) {
       console.error(`Error initializing bot ${botId}:`, error);
-      botData.status = 'error';
-      botData.error = error.message;
-      this.emitBotUpdate(botId);
       
-      // Update bot status in database
-      try {
-        DatabaseService.updateBot(botId, {
-          status: 'error',
-          lastActivity: new Date().toISOString()
-        });
-      } catch (dbError) {
-        console.error(`Error updating bot status in database:`, dbError);
+      // Clean up if bot exists in map
+      if (this.bots.has(botId)) {
+        const botData = this.bots.get(botId);
+        botData.status = 'error';
+        botData.error = error.message;
+        this.emitBotUpdate(botId);
+        
+        // Update bot status in database
+        try {
+          DatabaseService.updateBot(botId, {
+            status: 'error',
+            lastActivity: new Date().toISOString()
+          });
+        } catch (dbError) {
+          console.error(`Error updating bot status in database:`, dbError);
+        }
       }
       
       throw error;
+    } finally {
+      // Remove from initializing set
+      this.initializingBots.delete(botId);
     }
   }
 
   setupBotEvents(botData) {
     const { client, id } = botData;
 
+    // Set up timeout for restoration attempts
+    if (botData.isRestoring) {
+      botData.restorationAttempts++;
+      console.log(`Bot ${id} restoration attempt #${botData.restorationAttempts}`);
+      
+      // Increase timeout with each attempt to give more time for slow connections
+      const timeoutDuration = 30000 + (botData.restorationAttempts * 10000); // 30s, 40s, 50s, etc.
+      
+      botData.restorationTimeout = setTimeout(async () => {
+        console.log(`Restoration timeout reached for bot ${id} (attempt ${botData.restorationAttempts}) after ${timeoutDuration}ms`);
+        
+        // Clear restoration state
+        botData.isRestoring = false;
+        botData.restorationTimeout = null;
+        
+        // Strategy based on attempt number
+        if (botData.restorationAttempts >= 3) {
+          console.log(`Bot ${id} has failed ${botData.restorationAttempts} restoration attempts. Cleaning session and force restarting...`);
+          await this.forceRestartBot(id);
+          return;
+        } else if (botData.restorationAttempts >= 2) {
+          console.log(`Bot ${id} second restoration attempt failed. Cleaning session for fresh start...`);
+          await this.cleanBotSession(id);
+        }
+        
+        try {
+          // Try to destroy the client to force session cleanup
+          if (client && typeof client.destroy === 'function') {
+            await client.destroy();
+            console.log(`Bot ${id} client destroyed to clear session`);
+          }
+        } catch (error) {
+          console.log(`Note: Could not destroy client for bot ${id} (may not be initialized yet):`, error.message);
+        }
+        
+        // Update status and force re-initialization
+        botData.status = 'initializing';
+        botData.error = `Restoration timeout (attempt ${botData.restorationAttempts}) - session will be recreated`;
+        this.emitBotUpdate(id);
+        
+        // Save status to database
+        try {
+          DatabaseService.updateBot(id, {
+            status: 'initializing',
+            lastActivity: new Date().toISOString()
+          });
+        } catch (error) {
+          console.error(`Error updating bot ${id} restoration timeout in database:`, error);
+        }
+      }, timeoutDuration); // Dynamic timeout based on attempt number
+    }
+
     client.on('qr', async (qr) => {
-      // Skip QR generation for restored bots that should already be authenticated
+      // Clear restoration timeout if QR is being generated
+      if (botData.restorationTimeout) {
+        clearTimeout(botData.restorationTimeout);
+        botData.restorationTimeout = null;
+      }
+
+      // Allow QR generation if restoration has timed out or failed
       if (botData.isRestoring) {
-        console.log(`Skipping QR generation for restored bot ${id} - should already be authenticated`);
-        return;
+        console.log(`Restoration failed for bot ${id}, generating QR code for re-authentication`);
+        botData.isRestoring = false;
       }
       
-      // Additional check: if bot is already active, don't generate QR
-      if (botData.isActive) {
+      // Skip QR only if bot is actually ready and active
+      if (botData.isActive && botData.status === 'ready') {
         console.log(`Skipping QR generation for active bot ${id}`);
         return;
       }
@@ -320,11 +401,19 @@ export class BotManager {
     });
 
     client.on('ready', () => {
+      // Clear restoration timeout on successful connection
+      if (botData.restorationTimeout) {
+        clearTimeout(botData.restorationTimeout);
+        botData.restorationTimeout = null;
+      }
+      
       botData.status = 'ready';
       botData.isActive = true;
       botData.phoneNumber = client.info?.wid?.user || 'Unknown';
       botData.lastActivity = new Date();
       botData.isRestoring = false; // Clear restoration flag
+      botData.restorationAttempts = 0; // Reset restoration attempts counter
+      console.log(`Bot ${id} authenticated and ready!`);
       this.emitBotUpdate(id);
       // Save bot state when ready (with a small delay to avoid rapid saves)
       setTimeout(() => {
@@ -343,18 +432,42 @@ export class BotManager {
     });
 
     client.on('authenticated', () => {
+      console.log(`Bot ${id} authenticated successfully`);
+      
+      // Clear restoration flag and timeout when successfully authenticated
+      if (botData.isRestoring) {
+        console.log(`Bot ${id} restoration completed successfully`);
+        botData.isRestoring = false;
+        if (botData.restorationTimeout) {
+          clearTimeout(botData.restorationTimeout);
+          botData.restorationTimeout = null;
+        }
+      }
+      
       botData.status = 'authenticated';
-      botData.isRestoring = false; // Clear restoration flag
+      botData.error = null; // Clear any previous errors
       this.emitBotUpdate(id);
       // Don't save state here - wait for 'ready' event
-      console.log(`Bot ${id} authenticated`);
     });
 
     client.on('auth_failure', (msg) => {
+      console.log(`Bot ${id} authentication failed:`, msg);
+      
+      // Clear restoration flag and timeout on auth failure
+      if (botData.isRestoring) {
+        console.log(`Bot ${id} restoration failed - authentication error`);
+        botData.isRestoring = false;
+        if (botData.restorationTimeout) {
+          clearTimeout(botData.restorationTimeout);
+          botData.restorationTimeout = null;
+        }
+      }
+      
       botData.status = 'auth_failed';
       botData.error = msg;
       botData.isActive = false;
       this.emitBotUpdate(id);
+      
       // Save bot state on auth failure
       try {
         DatabaseService.updateBot(id, {
@@ -365,14 +478,26 @@ export class BotManager {
       } catch (error) {
         console.error(`Error updating bot ${id} auth failure in database:`, error);
       }
-      console.log(`Bot ${id} authentication failed:`, msg);
     });
 
     client.on('disconnected', (reason) => {
+      console.log(`Bot ${id} disconnected:`, reason);
+      
+      // Clear restoration flag and timeout when disconnected
+      if (botData.isRestoring) {
+        console.log(`Bot ${id} restoration interrupted - disconnected`);
+        botData.isRestoring = false;
+        if (botData.restorationTimeout) {
+          clearTimeout(botData.restorationTimeout);
+          botData.restorationTimeout = null;
+        }
+      }
+      
       botData.status = 'disconnected';
       botData.isActive = false;
       botData.error = reason;
       this.emitBotUpdate(id);
+      
       // Save bot state when disconnected
       try {
         DatabaseService.updateBot(id, {
@@ -383,7 +508,6 @@ export class BotManager {
       } catch (error) {
         console.error(`Error updating bot ${id} disconnection in database:`, error);
       }
-      console.log(`Bot ${id} disconnected:`, reason);
     });
 
     client.on('message_create', async (message) => {
@@ -703,6 +827,15 @@ export class BotManager {
     if (!bot) return false;
 
     try {
+      // Clear any restoration timeout
+      if (bot.restorationTimeout) {
+        clearTimeout(bot.restorationTimeout);
+        bot.restorationTimeout = null;
+      }
+      
+      // Clear restoration flag
+      bot.isRestoring = false;
+      
       if (bot.client) {
         await bot.client.destroy();
       }
@@ -713,6 +846,73 @@ export class BotManager {
     } catch (error) {
       console.error(`Error stopping bot ${botId}:`, error);
       return false;
+    }
+  }
+
+  async forceRestartBot(botId) {
+    console.log(`Force restarting bot ${botId} due to restoration issues`);
+    
+    const bot = this.bots.get(botId);
+    if (!bot) {
+      console.error(`Bot ${botId} not found for restart`);
+      return false;
+    }
+
+    try {
+      // Stop the bot completely
+      await this.stopBot(botId);
+      
+      // Remove from memory
+      this.bots.delete(botId);
+      
+      // Remove potentially corrupted session files
+      await this.cleanBotSession(botId);
+      
+      // Update database status
+      try {
+        DatabaseService.updateBot(botId, {
+          status: 'initializing',
+          isActive: false,
+          lastActivity: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error(`Error updating bot ${botId} restart in database:`, error);
+      }
+      
+      // Wait a moment then restart
+      setTimeout(() => {
+        console.log(`Restarting bot ${botId} after force restart`);
+        this.createBot(botId);
+      }, 2000);
+      
+      return true;
+    } catch (error) {
+      console.error(`Error force restarting bot ${botId}:`, error);
+      return false;
+    }
+  }
+
+  async cleanBotSession(botId) {
+    try {
+      const sessionPath = `./sessions/session-${botId}`;
+      console.log(`Cleaning potentially corrupted session for bot ${botId} at: ${sessionPath}`);
+      
+      // Check if session directory exists
+      const { exec } = await import('child_process');
+      const util = await import('util');
+      const execPromise = util.promisify(exec);
+      
+      // Check if session exists and remove if corrupted
+      try {
+        await execPromise(`ls -la "${sessionPath}"`);
+        console.log(`Session directory exists for bot ${botId}, removing for clean restart`);
+        await execPromise(`rm -rf "${sessionPath}"`);
+        console.log(`Session directory removed for bot ${botId}`);
+      } catch (error) {
+        console.log(`No existing session found for bot ${botId}, clean start available`);
+      }
+    } catch (error) {
+      console.error(`Error cleaning session for bot ${botId}:`, error);
     }
   }
 
@@ -782,19 +982,50 @@ export class BotManager {
     const bot = this.bots.get(botId);
     if (!bot) return false;
 
+    // Check if bot is already being initialized
+    if (this.initializingBots.has(botId)) {
+      console.log(`Bot ${botId} is already being restarted, skipping`);
+      return false;
+    }
+    
+    // Add to initializing set
+    this.initializingBots.add(botId);
+
     try {
-      // Stop the current client
-      if (bot.client) {
-        await bot.client.destroy();
+      console.log(`Restarting bot ${botId} - destroying current client`);
+      
+      // Clear any restoration timeout
+      if (bot.restorationTimeout) {
+        clearTimeout(bot.restorationTimeout);
+        bot.restorationTimeout = null;
       }
+      
+      // Clear restoration flag
+      bot.isRestoring = false;
+      
+      // Stop the current client with proper cleanup
+      if (bot.client) {
+        try {
+          await bot.client.destroy();
+          console.log(`Bot ${botId} client destroyed successfully`);
+        } catch (destroyError) {
+          console.log(`Note: Could not destroy client for bot ${botId}:`, destroyError.message);
+        }
+      }
+
+      // Wait a moment to ensure session cleanup
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Reset bot data
       bot.status = 'initializing';
       bot.qrCode = null;
       bot.isActive = false;
       bot.error = null;
+      bot.restorationAttempts = 0; // Reset restoration attempts
       this.emitBotUpdate(botId);
 
+      console.log(`Creating new client for bot ${botId} after restart`);
+      
       // Create new client with same auth strategy
       const newClient = new Client({
         authStrategy: new LocalAuth({
@@ -826,6 +1057,9 @@ export class BotManager {
       bot.error = error.message;
       this.emitBotUpdate(botId);
       return false;
+    } finally {
+      // Remove from initializing set
+      this.initializingBots.delete(botId);
     }
   }
 
