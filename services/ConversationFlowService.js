@@ -114,6 +114,12 @@ export class ConversationFlowService {
   }
 
   findOrCreateClient(phone) {
+    // Add defensive check for phone parameter
+    if (!phone) {
+      console.error(`[ERROR] findOrCreateClient - Invalid phone parameter:`, phone);
+      throw new Error('Invalid phone parameter');
+    }
+    
     let client = this.clients.get(phone);
     if (!client) {
       client = {
@@ -124,16 +130,25 @@ export class ConversationFlowService {
         createdAt: new Date()
       };
       this.clients.set(phone, client);
+      console.log(`[DEBUG] findOrCreateClient - Created new client for phone: ${phone}`);
+    } else {
+      console.log(`[DEBUG] findOrCreateClient - Found existing client for phone: ${phone}`);
     }
     return client;
   }
 
   findOrCreateActiveConversation(client) {
+    // Add defensive check for client object
+    if (!client || !client.phone) {
+      console.error(`[ERROR] findOrCreateActiveConversation - Invalid client object:`, client);
+      throw new Error('Invalid client object - missing phone property');
+    }
+    
     console.log(`[DEBUG] findOrCreateActiveConversation - Looking for conversation for client: ${client.phone}`);
     
     // Find active conversation for this client
     for (const [id, conv] of this.conversations.entries()) {
-      if (conv.client.phone === client.phone && conv.state !== 'COMPLETED') {
+      if (conv.client && conv.client.phone === client.phone && conv.state !== 'COMPLETED') {
         console.log(`[DEBUG] findOrCreateActiveConversation - Found existing conversation: ${id}, state: ${conv.state}`);
         return conv;
       }

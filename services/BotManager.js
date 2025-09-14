@@ -669,7 +669,7 @@ export class BotManager {
       // Use ConversationFlowService for all message handling
       // It will handle the complete conversation flow like the original Java system
       response = await botData.conversationFlowService.processIncomingMessage(
-        contact.number,
+        userPhone,
         messageText,
         contactName
       );
