@@ -37,21 +37,8 @@ export class BotManager {
           // Load conversations for this bot from database
           const botData = this.bots.get(config.id);
           if (botData && botData.conversationFlowService) {
-            const botConversations = new Map();
-            const conversations = DatabaseService.getBotConversations(config.id);
-            
-            for (const conversation of conversations) {
-              // Format conversation for ConversationFlowService
-              const formattedConversation = {
-                ...conversation,
-                startTime: conversation.startTime ? new Date(conversation.startTime) : new Date(),
-                answers: [] // This would need to be loaded from messages if we store structured answers
-              };
-              botConversations.set(conversation.clientPhone, formattedConversation);
-            }
-            
-            botData.conversationFlowService.conversations = botConversations;
-            console.log(`Loaded ${botConversations.size} conversations for bot ${config.name}`);
+            // Use the new database loading method
+            await botData.conversationFlowService.loadConversationsFromDatabase(config.id);
           }
         } else {
           console.log(`Skipping inactive bot: ${config.name} (${config.id}) - Status: ${config.status}`);

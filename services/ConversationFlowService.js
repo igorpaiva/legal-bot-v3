@@ -22,8 +22,8 @@ export class ConversationFlowService {
     this.messageTiming = new Map(); // Track message timing patterns
     this.typingDetection = new Map(); // Track typing patterns
     
-    // Load persisted data
-    this.loadConversations();
+    // Load persisted data - don't auto-load, let BotManager handle it
+    // this.loadConversations();
     
     // Clean up old timing data periodically
     setInterval(() => {
@@ -57,7 +57,7 @@ export class ConversationFlowService {
     
     try {
       const client = this.findOrCreateClient(phone);
-      const conversation = this.findOrCreateActiveConversation(client);
+      const conversation = this.findOrCreateActiveConversation(client, messageText);
       
       // Handle message bursts - wait for client to finish typing
       if (this.shouldWaitForMoreMessages(conversation, messageText)) {
@@ -137,7 +137,7 @@ export class ConversationFlowService {
     return client;
   }
 
-  findOrCreateActiveConversation(client) {
+  findOrCreateActiveConversation(client, messageText = '') {
     // Add defensive check for client object
     if (!client || !client.phone) {
       console.error(`[ERROR] findOrCreateActiveConversation - Invalid client object:`, client);
@@ -145,11 +145,74 @@ export class ConversationFlowService {
     }
     
     console.log(`[DEBUG] findOrCreateActiveConversation - Looking for conversation for client: ${client.phone}`);
+    console.log(`[DEBUG] findOrCreateActiveConversation - Total conversations in memory: ${this.conversations.size}`);
     
-    // Find active conversation for this client
+    // Log all existing conversations for debugging
     for (const [id, conv] of this.conversations.entries()) {
-      if (conv.client && conv.client.phone === client.phone && conv.state !== 'COMPLETED') {
-        console.log(`[DEBUG] findOrCreateActiveConversation - Found existing conversation: ${id}, state: ${conv.state}`);
+      console.log(`[DEBUG] findOrCreateActiveConversation - Conversation ${id}: client.phone=${conv.client?.phone}, state=${conv.state}, startedAt=${conv.startedAt}`);
+    }
+    
+    // Check if this is a post-service message (any message from existing client, except explicit new case requests)
+    const lowerText = messageText.toLowerCase();
+    
+    // Check if client explicitly wants a NEW case
+    const isExplicitNewCase = lowerText.includes('novo caso') ||
+                             lowerText.includes('nova questão') ||
+                             lowerText.includes('outro problema') ||
+                             lowerText.includes('outro assunto') ||
+                             lowerText.includes('nova situação') ||
+                             lowerText.includes('diferente') ||
+                             lowerText.includes('separado') ||
+                             (lowerText.includes('novo') && (lowerText.includes('problema') || lowerText.includes('juridic')));
+    
+    // If client has completed conversations and NOT requesting a new case explicitly, treat as post-service
+    const hasCompletedConversations = Array.from(this.conversations.values()).some(conv => 
+      conv.client && conv.client.phone === client.phone && conv.state === 'COMPLETED'
+    );
+    
+    const isPostServiceMessage = hasCompletedConversations && !isExplicitNewCase;
+    
+    console.log(`[DEBUG] findOrCreateActiveConversation - Is post-service message: ${isPostServiceMessage} ("${messageText}")`);
+    
+    // If it's a post-service message, prioritize COMPLETED conversations
+    if (isPostServiceMessage) {
+      for (const [id, conv] of this.conversations.entries()) {
+        if (conv && 
+            conv.client && 
+            conv.client.phone === client.phone && 
+            conv.state === 'COMPLETED') {
+          
+          console.log(`[DEBUG] findOrCreateActiveConversation - Found COMPLETED conversation for post-service message: ${id}`);
+          return conv;
+        }
+      }
+    }
+    
+    // Log all existing conversations for this client
+    for (const [id, conv] of this.conversations.entries()) {
+      if (conv.client && conv.client.phone === client.phone) {
+        console.log(`[DEBUG] findOrCreateActiveConversation - Found conversation for client ${client.phone}: ID=${id}, state=${conv.state}, startedAt=${conv.startedAt}`);
+      }
+    }
+    
+    // Find active conversation for this client (excluding COMPLETED ones unless it's a post-service message)
+    // Also validate that the conversation has proper structure
+    for (const [id, conv] of this.conversations.entries()) {
+      if (conv && 
+          conv.client && 
+          conv.client.phone === client.phone && 
+          conv.state && 
+          (conv.state === 'GREETING' || 
+           conv.state === 'COLLECTING_NAME' || 
+           conv.state === 'COLLECTING_EMAIL' || 
+           conv.state === 'ANALYZING_CASE' || 
+           conv.state === 'COLLECTING_STRATEGIC_INFO' || 
+           conv.state === 'COLLECTING_DETAILS' || 
+           conv.state === 'COLLECTING_DOCUMENTS' || 
+           conv.state === 'AWAITING_COMPLEMENT' || 
+           conv.state === 'AWAITING_LAWYER')) {
+        
+        console.log(`[DEBUG] findOrCreateActiveConversation - Found existing active conversation: ${id}, state: ${conv.state}`);
         return conv;
       }
     }
@@ -333,6 +396,12 @@ export class ConversationFlowService {
   async processConversationState(conversation, messageText, client) {
     const state = conversation.state;
     console.log(`[DEBUG] processConversationState - Conversation ID: ${conversation.id}, State: ${state}, Client: ${client.phone}, Message: "${messageText}"`);
+    console.log(`[DEBUG] processConversationState - Full conversation object:`, JSON.stringify({
+      id: conversation.id,
+      state: conversation.state,
+      client: conversation.client,
+      startedAt: conversation.startedAt
+    }, null, 2));
     
     switch (state) {
       case 'GREETING':
@@ -353,7 +422,11 @@ export class ConversationFlowService {
         return await this.handleAwaitingLawyer(conversation, messageText, client);
       case 'AWAITING_COMPLEMENT':
         return await this.handleComplementCollection(conversation, messageText, client);
+      case 'COMPLETED':
+        console.log(`[DEBUG] processConversationState - Handling COMPLETED state for client: ${client.phone}`);
+        return await this.handlePostServiceMessage(conversation, messageText, client);
       default:
+        console.log(`[DEBUG] processConversationState - DEFAULT case reached with state: ${state}, falling back to handleGreeting`);
         return await this.handleGreeting(conversation, messageText, client);
     }
   }
@@ -1051,6 +1124,143 @@ Responda APENAS com sua mensagem:`;
     return await this.groqService.generateResponse(waitingPrompt);
   }
 
+  async handlePostServiceMessage(conversation, messageText, client) {
+    const firstName = client.name ? client.name.split(' ')[0] : '';
+    
+    console.log(`[DEBUG] handlePostServiceMessage - Client: ${client.phone}, Message: "${messageText}"`);
+    
+    // Detect if message is only media/documents (no text content)
+    const isOnlyMedia = !messageText || messageText.trim().length === 0 || 
+                       messageText.toLowerCase().includes('[documento]') ||
+                       messageText.toLowerCase().includes('[foto]') ||
+                       messageText.toLowerCase().includes('[pdf]') ||
+                       messageText.toLowerCase().includes('[arquivo]');
+    
+    if (isOnlyMedia) {
+      // Handle pure media uploads without text
+      const mediaPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} enviou documentos/arquivos após o atendimento ter sido finalizado.
+
+TAREFA: Agradecer pelos documentos e confirmar que foram guardados.
+
+INSTRUÇÕES:
+- Agradeça pelos documentos
+- Confirme que foram adicionados ao processo dele
+- Seja breve e profissional
+- Use o nome ${firstName} se disponível
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(mediaPrompt);
+    }
+    
+    // For any text message after service completion, analyze and respond contextually
+    const lowerText = messageText.toLowerCase();
+    
+    // Detect document-related messages
+    const isDocumentMessage = lowerText.includes('documento') ||
+                             lowerText.includes('enviar') ||
+                             lowerText.includes('anexar') ||
+                             lowerText.includes('foto') ||
+                             lowerText.includes('arquivo') ||
+                             lowerText.includes('pdf') ||
+                             lowerText.includes('comprovante');
+    
+    if (isDocumentMessage) {
+      // Handle document-related messages
+      const documentPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} mencionou documentos após o atendimento: "${messageText}"
+
+TAREFA: Responder sobre os documentos de forma útil e direta.
+
+INSTRUÇÕES:
+- Se está enviando documentos, agradeça e diga que fica no aguardo do envio
+- Se está perguntando sobre documentos, oriente de forma simples
+- Seja concisa e direta - máximo 2 frases
+- Use o nome ${firstName}
+- Não mencione email ou outras formas de envio - apenas aguarde o envio pelo WhatsApp
+- Seja empática e profissional
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(documentPrompt);
+    }
+    
+    // Detect greeting messages
+    const isGreeting = lowerText.includes('olá') || 
+                      lowerText.includes('oi') || 
+                      lowerText.includes('bom dia') ||
+                      lowerText.includes('boa tarde') ||
+                      lowerText.includes('boa noite') ||
+                      lowerText.includes('tudo bem') ||
+                      messageText.length < 20;
+    
+    if (isGreeting) {
+      // Handle greetings - ask how to help
+      const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} está cumprimentando após ter finalizado o atendimento.
+
+TAREFA: Cumprimentar de volta e perguntar como pode ajudar.
+
+INSTRUÇÕES:
+- Retorne o cumprimento apropriado
+- Use o nome ${firstName}
+- Pergunte "Como posso ajudar?"
+- Seja calorosa e disponível
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(greetingPrompt);
+    }
+    
+    // Detect process follow-up requests
+    const isFollowUp = lowerText.includes('andamento') ||
+                      lowerText.includes('acompanhar') ||
+                      lowerText.includes('processo') ||
+                      lowerText.includes('advogado') ||
+                      lowerText.includes('contato') ||
+                      lowerText.includes('novidade') ||
+                      lowerText.includes('atualiza') ||
+                      lowerText.includes('quando') ||
+                      lowerText.includes('prazo');
+    
+    if (isFollowUp) {
+      // Handle process follow-up requests
+      const followUpPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} está perguntando sobre o andamento do processo: "${messageText}"
+
+TAREFA: Explicar sobre acompanhamento do processo.
+
+INSTRUÇÕES:
+- Tranquilize que o processo está em andamento
+- Explique que assim que houver novidades, o advogado responsável irá atualizar
+- Seja empática e profissional
+- Use o nome ${firstName}
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(followUpPrompt);
+    }
+    
+    // Handle ANY other message as related to the previous case - generic but contextual response
+    const genericPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente ${firstName} enviou uma mensagem após ter finalizado um atendimento: "${messageText}"
+
+CONTEXTO: Este cliente já teve um caso finalizado conosco, então esta mensagem está relacionada ao caso anterior.
+
+TAREFA: Responder de forma útil e empática, considerando que se trata do caso anterior.
+
+INSTRUÇÕES:
+- Analise a mensagem e responda de forma apropriada e contextual
+- Se for uma dúvida sobre o caso anterior, tente ajudar ou direcione para o advogado responsável
+- Se for uma informação adicional, agradeça e confirme que foi anotada
+- Se for uma pergunta geral, responda ou oriente
+- Se parecer ser realmente uma nova questão jurídica totalmente diferente, sugira delicadamente que pode ser um novo caso
+- Seja sempre empática e profissional
+- Use o nome ${firstName}
+- Seja concisa mas completa
+- Sempre assuma que está relacionado ao caso anterior, a menos que seja claramente diferente
+
+Responda APENAS com sua mensagem:`;
+
+    return await this.groqService.generateResponse(genericPrompt);
+  }
+
   getRandomGreeting() {
     const now = new Date();
     const hour = now.getHours();
@@ -1288,7 +1498,24 @@ Responda APENAS com sua mensagem:`;
       const data = await fs.readFile(filePath, 'utf8');
       const parsed = JSON.parse(data);
       
-      this.conversations = new Map(Object.entries(parsed.conversations || {}));
+      // Load conversations with validation to filter corrupted data
+      const rawConversations = Object.entries(parsed.conversations || {});
+      this.conversations = new Map();
+      
+      for (const [id, conversation] of rawConversations) {
+        // Validate conversation structure
+        if (conversation && 
+            conversation.client && 
+            conversation.client.phone && 
+            conversation.state && 
+            conversation.startedAt) {
+          this.conversations.set(id, conversation);
+          console.log(`[DEBUG] loadConversations - Loaded valid conversation: ${id}, client: ${conversation.client.phone}, state: ${conversation.state}`);
+        } else {
+          console.warn(`[WARNING] loadConversations - Skipping corrupted conversation: ${id}`, conversation);
+        }
+      }
+      
       this.clients = new Map(Object.entries(parsed.clients || {}));
       this.messages = new Map(Object.entries(parsed.messages || {}));
       
@@ -1309,6 +1536,75 @@ Responda APENAS com sua mensagem:`;
       if (error.code !== 'ENOENT') {
         console.error('Error loading conversations:', error);
       }
+    }
+  }
+
+  // Load conversations from database (for production use)
+  async loadConversationsFromDatabase(botId) {
+    if (!this.botManager) {
+      console.warn('[WARNING] loadConversationsFromDatabase - BotManager not available, using JSON fallback');
+      return this.loadConversations();
+    }
+
+    try {
+      // Import DatabaseService dynamically
+      const { default: DatabaseService } = await import('./DatabaseService.js');
+      const dbConversations = DatabaseService.getBotConversations(botId);
+      
+      this.conversations = new Map();
+      this.clients = new Map();
+      
+      for (const dbConv of dbConversations) {
+        // Convert database conversation to ConversationFlowService format
+        const conversation = {
+          id: parseInt(dbConv.id) || this.conversationIdCounter++,
+          client: {
+            phone: dbConv.clientPhone,
+            name: dbConv.clientName,
+            email: null, // Will be loaded from client data if available
+            createdAt: dbConv.startTime
+          },
+          state: this.mapDatabaseStatusToState(dbConv.status),
+          startedAt: new Date(dbConv.startTime),
+          lastActivityAt: new Date(dbConv.startTime),
+          conversationHistory: []
+        };
+
+        // Validate the conversation structure
+        if (conversation.client && 
+            conversation.client.phone && 
+            conversation.state && 
+            conversation.startedAt) {
+          this.conversations.set(conversation.id.toString(), conversation);
+          
+          // Store client data
+          this.clients.set(conversation.client.phone, conversation.client);
+          
+          console.log(`[DEBUG] loadConversationsFromDatabase - Loaded conversation: ${conversation.id}, client: ${conversation.client.phone}, state: ${conversation.state}`);
+        } else {
+          console.warn(`[WARNING] loadConversationsFromDatabase - Skipping invalid conversation:`, dbConv);
+        }
+      }
+      
+      console.log(`Loaded ${this.conversations.size} conversations from database, ${this.clients.size} clients`);
+    } catch (error) {
+      console.error('Error loading conversations from database:', error);
+      // Fallback to JSON loading
+      return this.loadConversations();
+    }
+  }
+
+  // Map database status to conversation state
+  mapDatabaseStatusToState(dbStatus) {
+    switch (dbStatus) {
+      case 'completed':
+        return 'COMPLETED';
+      case 'active':
+        return 'ANALYZING_CASE'; // Default active state
+      case 'abandoned':
+        return 'COMPLETED'; // Treat abandoned as completed for post-service handling
+      default:
+        return 'GREETING'; // Default state
     }
   }
 
