@@ -518,30 +518,11 @@ export class BotManager {
           
           // Check if it's a PDF
           if (media.mimetype && botData.pdfProcessingService.isPdfMimetype(media.mimetype)) {
-            console.log(`Bot ${botData.id} - Processing PDF document from ${contactName}`);
+            console.log(`Bot ${botData.id} - PDF document received from ${contactName} (content reading disabled)`);
             
-            // Process PDF and extract text
-            const pdfText = await botData.pdfProcessingService.processPdf(media);
-            
-            if (pdfText && !pdfText.includes('Desculpe')) {
-              // Format the PDF text for legal context
-              messageText = botData.pdfProcessingService.formatPdfTextForLegal(pdfText);
-              console.log(`Bot ${botData.id} - PDF processed: ${pdfText.substring(0, 200)}...`);
-            } else {
-              // PDF processing failed - send error message directly and return
-              console.log(`Bot ${botData.id} - Failed to process PDF, sending error message directly`);
-              
-              // Add human-like delay before sending error response
-              await botData.humanLikeDelay.simulateReading(pdfText.length);
-              await botData.humanLikeDelay.simulateTyping(chat);
-              await botData.humanLikeDelay.waitBeforeResponse();
-              
-              // Send error message directly to user
-              await this.sendLongMessage(chat, pdfText, botData.humanLikeDelay);
-              console.log(`Bot ${botData.id} sent PDF error response to ${contactName}: ${pdfText.substring(0, 100)}...`);
-              
-              return; // Don't process this through conversation flow
-            }
+            // PDF received - acknowledge receipt without reading content
+            messageText = '[DOCUMENTO PDF ANEXADO]';
+            console.log(`Bot ${botData.id} - PDF document acknowledged: ${contactName}`);
           } else {
             // Unsupported document type - send error message directly and return
             const errorMessage = 'Desculpe, apenas documentos PDF são suportados. Pode enviar um PDF ou me contar sobre o documento por texto/áudio?';
@@ -618,7 +599,7 @@ export class BotManager {
       } else {
         // Handle unsupported message types
         console.log(`Bot ${botData.id} - Unsupported message type: ${message.type}`);
-        messageText = 'Desculpe, posso responder a mensagens de texto, áudio e documentos PDF. Como posso ajudá-lo hoje?';
+        messageText = 'Desculpe, posso responder a mensagens de texto, áudio e aceitar documentos PDF. Como posso ajudá-lo hoje?';
       }
 
       // Simulate reading the message first (longer messages take more time to read)

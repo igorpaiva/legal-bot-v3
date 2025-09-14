@@ -14,8 +14,9 @@ export class PdfProcessingService {
 
   /**
    * Process PDF from WhatsApp media object or file path
+   * NOTE: Text extraction disabled - PDFs are accepted but content is not read
    * @param {Object|string} mediaInput - WhatsApp media object or PDF file path
-   * @returns {Promise<string>} - Extracted text from PDF
+   * @returns {Promise<string>} - Acknowledgment message
    */
   async processPdf(mediaInput) {
     let tempFilePath = null;
@@ -25,7 +26,7 @@ export class PdfProcessingService {
       
       // Handle WhatsApp media object
       if (typeof mediaInput === 'object' && mediaInput.data) {
-        console.log(`Processing PDF from WhatsApp media object - mimetype: ${mediaInput.mimetype}`);
+        console.log(`Processing PDF from WhatsApp media object - mimetype: ${mediaInput.mimetype} (content reading disabled)`);
         
         // Validate it's a PDF
         if (!this.isPdfMimetype(mediaInput.mimetype)) {
@@ -46,11 +47,11 @@ export class PdfProcessingService {
         fs.writeFileSync(tempFilePath, pdfBuffer);
         pdfFilePath = tempFilePath;
         
-        console.log(`Created temporary PDF file: ${pdfFilePath} (${pdfBuffer.length} bytes)`);
+        console.log(`Created temporary PDF file: ${pdfFilePath} (${pdfBuffer.length} bytes) - content reading disabled`);
       } else if (typeof mediaInput === 'string') {
         // Handle file path
         pdfFilePath = mediaInput;
-        console.log(`Processing PDF file: ${pdfFilePath}`);
+        console.log(`Processing PDF file: ${pdfFilePath} (content reading disabled)`);
       } else {
         throw new Error('Invalid input: expected WhatsApp media object or file path');
       }
@@ -64,30 +65,16 @@ export class PdfProcessingService {
       const stats = fs.statSync(pdfFilePath);
       const fileSizeInMB = stats.size / (1024 * 1024);
       
-      console.log(`PDF file info - Size: ${fileSizeInMB.toFixed(2)}MB, Path: ${pdfFilePath}`);
+      console.log(`PDF file info - Size: ${fileSizeInMB.toFixed(2)}MB, Path: ${pdfFilePath} - content reading disabled`);
       
       if (fileSizeInMB > this.maxFileSizeMB) {
         throw new Error(`PDF file too large: ${fileSizeInMB.toFixed(2)}MB (max ${this.maxFileSizeMB}MB)`);
       }
 
-      // Extract text from PDF
-      const extractedText = await this.extractTextFromPdf(pdfFilePath);
+      // TEXT EXTRACTION DISABLED - Just acknowledge receipt
+      console.log(`PDF file received and stored - content reading disabled`);
       
-      if (!extractedText || extractedText.trim().length === 0) {
-        throw new Error('No text found in PDF or PDF might be image-based');
-      }
-      
-      // Limit text length to prevent overwhelming the system
-      let processedText = extractedText.trim();
-      if (processedText.length > this.maxTextLength) {
-        processedText = processedText.substring(0, this.maxTextLength) + '\n\n[DOCUMENTO TRUNCADO - Texto muito longo]';
-        console.log(`PDF text truncated from ${extractedText.length} to ${this.maxTextLength} characters`);
-      }
-      
-      console.log(`PDF processing completed - Extracted ${processedText.length} characters`);
-      console.log(`PDF content preview: ${processedText.substring(0, 200)}...`);
-      
-      return processedText;
+      return 'DOCUMENTO PDF RECEBIDO - processamento de conteúdo desabilitado';
 
     } catch (error) {
       console.error('Error processing PDF:', error);
@@ -97,8 +84,6 @@ export class PdfProcessingService {
         return `Desculpe, o PDF é muito grande (máximo ${this.maxFileSizeMB}MB). Pode enviar um arquivo menor ou me contar sobre o conteúdo por texto/áudio?`;
       } else if (error.message.includes('Invalid file type')) {
         return 'Desculpe, apenas arquivos PDF são suportados. Pode enviar um PDF ou me contar sobre o documento por texto/áudio?';
-      } else if (error.message.includes('image-based') || error.message.includes('no readable text') || error.message.includes('No text found')) {
-        return 'Desculpe, este PDF parece conter apenas imagens ou texto não legível. Pode me contar sobre o conteúdo do documento por texto ou áudio?';
       } else {
         return 'Desculpe, não consegui processar o PDF. Pode tentar enviar novamente ou me contar sobre o conteúdo por texto/áudio?';
       }
@@ -113,7 +98,7 @@ export class PdfProcessingService {
             } catch (cleanupError) {
               console.error('Error during PDF cleanup:', cleanupError);
             }
-          }, 500); // Reduced to 500ms since pdf2json doesn't have external dependencies
+          }, 500);
         } catch (cleanupError) {
           console.error('Error scheduling PDF cleanup:', cleanupError);
         }
@@ -123,10 +108,16 @@ export class PdfProcessingService {
 
   /**
    * Extract text from PDF file using pdf2json
+   * NOTE: FUNCTION DISABLED - Text extraction not performed
    * @param {string} pdfFilePath - Path to PDF file
    * @returns {Promise<string>} - Extracted text
    */
   async extractTextFromPdf(pdfFilePath) {
+    // TEXT EXTRACTION DISABLED
+    console.log(`[DISABLED] extractTextFromPdf called for: ${pdfFilePath} - function disabled`);
+    return 'EXTRAÇÃO DE TEXTO DESABILITADA';
+    
+    /* DISABLED CODE - Text extraction functionality
     try {
       return new Promise((resolve, reject) => {
         const pdfParser = new PDFParser();
@@ -191,6 +182,7 @@ export class PdfProcessingService {
       console.error('Error extracting text from PDF:', error);
       throw new Error(`Failed to extract text from PDF: ${error.message}`);
     }
+    */
   }
 
   /**
@@ -273,10 +265,16 @@ export class PdfProcessingService {
 
   /**
    * Format extracted PDF text for legal context
+   * NOTE: FUNCTION DISABLED - Text extraction disabled
    * @param {string} text - Raw extracted text
    * @returns {string} - Formatted text with context
    */
   formatPdfTextForLegal(text) {
+    // TEXT FORMATTING DISABLED since text extraction is disabled
+    console.log(`[DISABLED] formatPdfTextForLegal called - function disabled`);
+    return '[DOCUMENTO PDF ANEXADO - leitura de conteúdo desabilitada]';
+    
+    /* DISABLED CODE - Text formatting functionality
     if (!text || text.trim().length === 0) {
       return '';
     }
@@ -291,5 +289,6 @@ FIM DO DOCUMENTO
 Com base neste documento, `;
     
     return formattedText;
+    */
   }
 }
