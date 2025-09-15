@@ -477,11 +477,11 @@ export class ConversationFlowService {
 
 SITUAÇÃO: O cliente já forneceu nome e email anteriormente.
 
-TAREFA: Fazer uma saudação calorosa reconhecendo que já se conhecem e ir direto ao caso.
+TAREFA: Fazer uma saudação calorosa perguntando como vai e ir direto ao caso.
 
 INSTRUÇÕES:
 - Cumprimente usando o primeiro nome (${firstName})
-- Reconheça que já se conhecem
+- Pergunte como vai o cliente
 - Convide a pessoa a contar sobre a situação jurídica
 - Seja calorosa mas objetiva
 - Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
@@ -568,7 +568,7 @@ Responda APENAS com sua mensagem em português:`;
       const firstName = client.name.split(' ')[0];
       
       // Let AI generate natural response asking for email
-      const emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${client.name}".
+      const emailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente acabou de se apresentar como "${client.name}".
 
 SITUAÇÃO: Agora você precisa do email da pessoa para enviar atualizações sobre o caso.
 
@@ -609,7 +609,7 @@ Responda APENAS com sua mensagem:`;
       // If case details were provided, acknowledge them while asking for email
       let emailPrompt;
       if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
-        emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}" e também compartilhou detalhes sobre sua situação.
+        emailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente acabou de se apresentar como "${name}" e também compartilhou detalhes sobre sua situação.
 
 SITUAÇÃO: O cliente forneceu nome E informações sobre o caso. Agora você precisa do email.
 
@@ -622,7 +622,7 @@ INSTRUÇÕES:
 
 Responda APENAS com sua mensagem:`;
       } else {
-        emailPrompt = `Você é Ana, assistente jurídica. O cliente acabou de se apresentar como "${name}".
+        emailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente acabou de se apresentar como "${name}".
 
 SITUAÇÃO: Agora você precisa do email da pessoa para enviar atualizações sobre o caso.
 
@@ -796,7 +796,7 @@ Responda APENAS com sua mensagem:`;
       if (conversation.analysis) {
         this.saveTriageAnalysis(conversation, conversation.analysis);
       }
-      return `Entendi. Com base em todas as informações que você forneceu, nossa equipe jurídica irá analisar seu caso detalhadamente. Um advogado especializado entrará em contato em até 24 horas para discutir os próximos passos e esclarecer suas dúvidas.`;
+      return `Com base em todas as informações que você forneceu, nossa equipe jurídica irá analisar seu caso detalhadamente. Um advogado especializado entrará em contato em até 24 horas para discutir os próximos passos e esclarecer suas dúvidas.`;
     }
     
     // Se ainda não fez análise inicial ou precisa de mais informações
@@ -1000,7 +1000,7 @@ TAREFA: Com todas essas informações, decidir se pode finalizar ou precisa sabe
 REGRA IMPORTANTE: Se há muita informação já coletada E o cliente demonstra frustração, FINALIZE o atendimento.
 
 Se PRECISAR de mais informações (apenas se essencial):
-- Use apenas "entendi" - não repita a situação
+- Não repita a situação
 - Faça UMA pergunta específica sobre algo realmente crucial
 - Máximo 1 frase
 
@@ -1061,12 +1061,12 @@ TAREFA: Se houver perguntas, responda brevemente e redirecione. Se a resposta fo
 
 INSTRUÇÕES:
 - Se há perguntas (sobre custos, tempo, processo), responda genericamente e redirecione
-- Use apenas "entendi" - não repita o que a pessoa disse
+- Não repita o que a pessoa disse
 - Peça detalhes específicos de forma objetiva
 - Seja concisa mas completa
 - Seja gentil mas direta
 
-EXEMPLO: Se perguntarem "quanto custa?", responda "O advogado vai explicar sobre valores. Pode me dar mais detalhes sobre sua situação?"
+EXEMPLO: Se perguntarem "quanto custa?", responda "O advogado vai explicar sobre valores em breve. Algo mais?"
 
 Responda APENAS com sua mensagem:`;
 
@@ -1173,7 +1173,7 @@ Responda APENAS com sua mensagem:`;
 TAREFA: Agradecer pelos documentos e confirmar que foram guardados.
 
 INSTRUÇÕES:
-- Agradeça pelos documentos${isMultipleDocuments ? ' (' + documentCount + ' arquivos)' : ''}
+- Agradeça pelos documentos${isMultipleDocuments ? ' (arquivos)' : ''}
 - Confirme que foram adicionados ao processo dele
 - Seja breve e profissional
 - Use o nome ${firstName} se disponível
@@ -1220,7 +1220,7 @@ Responda APENAS com sua mensagem:`;
 TAREFA: Agradecer pelos documentos enviados.
 
 INSTRUÇÕES:
-- Agradeça pelos documentos recebidos${isMultiple ? ' (' + documentCount + ' arquivos)' : ''}
+- Agradeça pelos documentos recebidos${isMultiple ? ' (arquivos)' : ''}
 - Confirme que foram adicionados ao processo dele
 - Seja breve e profissional (máximo 1-2 frases)
 - Use o nome ${firstName}
@@ -1236,7 +1236,7 @@ Responda APENAS com sua mensagem:`;
 TAREFA: Responder sobre os documentos de forma útil e direta.
 
 INSTRUÇÕES:
-- Peça para enviar os documentos pelo WhatsApp
+- Peça para enviar os documentos se possível. Pode ser agora ou depois, mas o mais rápido possível para que eles sejam guardados.
 - Seja concisa e direta (máximo 1-2 frases)
 - Use o nome ${firstName}
 - Seja empática e profissional
@@ -1963,7 +1963,7 @@ Responda APENAS com sua mensagem:`;
     const requiredDocs = conversation.analysis?.legal_solution?.required_documents || '';
     const documentsSection = requiredDocs ? `\n\n📋 *DOCUMENTOS NECESSÁRIOS:*\n${requiredDocs}` : '';
     
-    const offerPrompt = `Você é Ana, assistente jurídica empática. Você acabou de coletar as informações necessárias do cliente ${firstName}.
+    const offerPrompt = `Você é ${this.assistantName}, assistente jurídica empática. Você acabou de coletar as informações necessárias do cliente ${firstName}.
 
 HISTÓRIA COMPARTILHADA PELO CLIENTE:
 "${allUserMessages}"
