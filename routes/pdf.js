@@ -1,8 +1,35 @@
 import express from 'express';
 import pdfService from '../services/PdfGenerationService.js';
 import ConversationFlowService from '../services/ConversationFlowService.js';
+import DatabaseService from '../services/DatabaseService.js';
 
 const router = express.Router();
+
+// Helper function to get office name
+async function getOfficeNameForBot(botManager) {
+  try {
+    // Get all bots and filter for active ones
+    const allBots = botManager.getAllBots();
+    const activeBots = allBots.filter(bot => bot.isActive && bot.status === 'ready');
+    
+    if (activeBots.length === 0) {
+      return "V3"; // Fallback
+    }
+
+    const bot = activeBots[0];
+    const ownerId = bot.ownerId;
+    
+    if (!ownerId) {
+      return "V3"; // Fallback
+    }
+
+    const user = await DatabaseService.getUserById(ownerId);
+    return user?.lawOfficeName || "V3"; // Use law office name or fallback
+  } catch (error) {
+    console.error('Error getting law office name for PDF:', error);
+    return "V3"; // Fallback on error
+  }
+}
 
 // Generate PDF for a specific conversation
 router.get('/conversation/:conversationId', async (req, res) => {
@@ -33,7 +60,10 @@ router.get('/conversation/:conversationId', async (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' });
     }
     
-    const pdf = await pdfService.generateConversationPdf(conversation);
+    // Get dynamic office name
+    const officeName = await getOfficeNameForBot(botManager);
+    
+    const pdf = await pdfService.generateConversationPdf(conversation, officeName);
     
     const filename = `relatorio-${(conversation.client.name || 'cliente').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
     

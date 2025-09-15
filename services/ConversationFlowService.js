@@ -31,6 +31,36 @@ export class ConversationFlowService {
     }, 300000); // Every 5 minutes
   }
 
+  // Get the law office name for the current bot
+  async getLawOfficeName() {
+    if (!this.botManager) {
+      return 'V3'; // Fallback to default if no botManager
+    }
+
+    // Find the current bot by looking for the bot that owns this conversation service
+    const currentBot = Array.from(this.botManager.bots.values()).find(bot => 
+      bot.conversationFlowService === this
+    );
+
+    if (!currentBot || !currentBot.ownerId) {
+      return 'V3'; // Fallback to default if no bot found or no owner
+    }
+
+    try {
+      // Import DatabaseService to get law office info
+      const { default: DatabaseService } = await import('./DatabaseService.js');
+      const lawOffice = DatabaseService.getUserById(currentBot.ownerId);
+      
+      if (lawOffice && lawOffice.lawOfficeName) {
+        return lawOffice.lawOfficeName;
+      }
+    } catch (error) {
+      console.error('Error getting law office name:', error);
+    }
+
+    return 'V3'; // Final fallback
+  }
+
   cleanupOldTimingData() {
     const fiveMinutesAgo = Date.now() - 300000;
     
@@ -516,8 +546,11 @@ Responda APENAS com sua mensagem:`;
     // Normal greeting flow - ask for name
     conversation.state = 'COLLECTING_NAME';
     
+    // Get the law office name dynamically
+    const lawOfficeName = await this.getLawOfficeName();
+    
     // Let AI generate a completely natural greeting
-    const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório V3. 
+    const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica do escritório ${lawOfficeName}. 
     
 Um cliente acabou de entrar em contato via WhatsApp pela primeira vez.
 
@@ -2101,7 +2134,10 @@ Responda APENAS com sua mensagem:`;
     const conversationMessages = conversation.conversationHistory || [];
     const allUserMessages = conversationMessages.filter(msg => msg.role === 'user').map(msg => msg.content).join('\n\n');
     
-    const completionPrompt = `Você é ${this.assistantName}, assistente jurídica empática do escritório V3.
+    // Get the law office name dynamically
+    const lawOfficeName = await this.getLawOfficeName();
+    
+    const completionPrompt = `Você é ${this.assistantName}, assistente jurídica empática do escritório ${lawOfficeName}.
 
 HISTÓRIA COMPARTILHADA PELO CLIENTE:
 "${allUserMessages}"

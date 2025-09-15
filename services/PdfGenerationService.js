@@ -76,7 +76,7 @@ class PdfGenerationService {
       .replace(/\//g, '&#x2F;');
   }
 
-  generateConversationHtml(conversation) {
+  generateConversationHtml(conversation, officeName = 'V3') {
     const client = conversation.client;
     const analysis = conversation.triageAnalysis;
     const preAnalysis = conversation.preAnalysis;
@@ -219,7 +219,7 @@ class PdfGenerationService {
     <body>
       <div class="header">
         <h1>RELATÓRIO DE TRIAGEM JURÍDICA</h1>
-        <div class="subtitle">V3 - Sistema de Triagem Jurídica</div>
+        <div class="subtitle">${officeName} - Sistema de Triagem Jurídica</div>
       </div>
 
       <!-- Client Information -->
@@ -410,14 +410,14 @@ class PdfGenerationService {
       ` : ''}
 
       <div class="footer">
-        Gerado em: ${new Date().toLocaleString('pt-BR')} | V3 - Sistema de Triagem Jurídica
+        Gerado em: ${new Date().toLocaleString('pt-BR')} | ${officeName} - Sistema de Triagem Jurídica
       </div>
     </body>
     </html>
     `;
   }
 
-  generateSummaryHtml(conversations) {
+  generateSummaryHtml(conversations, officeName = 'Sistema') {
     return `
     <!DOCTYPE html>
     <html>
@@ -528,7 +528,7 @@ class PdfGenerationService {
     <body>
       <div class="header">
         <h1>RELATÓRIO GERAL DE CONVERSAS</h1>
-        <div class="subtitle">V3 - Sistema de Triagem Jurídica</div>
+        <div class="subtitle">${officeName} - Sistema de Triagem Jurídica</div>
       </div>
 
       <div class="section">
@@ -580,7 +580,7 @@ class PdfGenerationService {
       </div>
 
       <div class="footer">
-        Gerado em: ${new Date().toLocaleString('pt-BR')} | V3 - Sistema de Triagem Jurídica
+        Gerado em: ${new Date().toLocaleString('pt-BR')} | ${officeName} - Sistema de Triagem Jurídica
       </div>
     </body>
     </html>
@@ -601,7 +601,7 @@ class PdfGenerationService {
     return stateLabels[state] || state;
   }
 
-  async generateConversationPdf(conversation) {
+  async generateConversationPdf(conversation, officeName = 'V3') {
     let page = null;
     let retries = 2;
     
@@ -610,7 +610,7 @@ class PdfGenerationService {
         await this.initialize();
         
         page = await this.browser.newPage();
-        const html = this.generateConversationHtml(conversation);
+        const html = this.generateConversationHtml(conversation, officeName);
         
         await page.setContent(html, { waitUntil: 'networkidle0' });
         

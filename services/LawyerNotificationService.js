@@ -10,6 +10,32 @@ class LawyerNotificationService {
     this.databaseService = DatabaseService;
   }
 
+  // Get law office name for the active bot
+  async getLawOfficeName(botManager) {
+    try {
+      // Get all bots and filter for active ones
+      const allBots = botManager.getAllBots();
+      const activeBots = allBots.filter(bot => bot.isActive && bot.status === 'ready');
+      
+      if (activeBots.length === 0) {
+        return "V3"; // Fallback if no active bots
+      }
+
+      const bot = activeBots[0];
+      const ownerId = bot.ownerId;
+      
+      if (!ownerId) {
+        return "V3"; // Fallback if no owner ID
+      }
+
+      const user = await this.databaseService.getUserById(ownerId);
+      return user?.lawOfficeName || "V3"; // Use law office name or fallback
+    } catch (error) {
+      console.error('Error getting law office name:', error);
+      return "V3"; // Fallback on error
+    }
+  }
+
   // Load lawyers from database
   async loadLawyers() {
     try {
@@ -99,6 +125,9 @@ class LawyerNotificationService {
       const clientPhone = conversation.client.phone;
       const caseDate = new Date(conversation.startTime || conversation.startedAt).toLocaleDateString('pt-BR');
       
+      // Get dynamic office name
+      const officeName = await this.getLawOfficeName(botManager);
+      
       const message = `📋 *NOVO CASO - ${legalField.toUpperCase()}*
 
 👤 *Cliente:* ${clientName}
@@ -111,7 +140,7 @@ ${conversation.triageAnalysis?.case?.description || 'Consulta sobre ' + legalFie
 🎯 *Status:* Triagem concluída
 📄 *Relatório completo em anexo*
 
-_Enviado automaticamente pelo sistema V3_`;
+_Enviado automaticamente pelo sistema ${officeName}_`;
 
       // Send the text message first
       console.log('Sending text message...');
@@ -238,8 +267,11 @@ _Enviado automaticamente pelo sistema V3_`;
       // Generate PDF for the conversation
       const PdfGenerationService = (await import('./PdfGenerationService.js')).default;
       
+      // Get dynamic office name for PDF
+      const officeName = await this.getLawOfficeName(botManager);
+      
       console.log(`Generating PDF for completed case: ${conversation.id}`);
-      const pdfBuffer = await PdfGenerationService.generateConversationPdf(formattedConversation);
+      const pdfBuffer = await PdfGenerationService.generateConversationPdf(formattedConversation, officeName);
       
       console.log('Generated PDF - type:', typeof pdfBuffer);
       console.log('Generated PDF - is Buffer:', Buffer.isBuffer(pdfBuffer));
