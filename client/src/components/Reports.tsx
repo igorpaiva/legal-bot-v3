@@ -103,7 +103,7 @@ const Reports: React.FC<ReportsProps> = () => {
         },
         state: randomState,
         startTime: new Date(Date.now() - Math.floor(Math.random() * 30) * 24 * 60 * 60 * 1000).toISOString(),
-        botName: 'Legal Bot',
+        botName: 'Temis',
         triageAnalysis: {
           case: {
             category: randomLegalField,

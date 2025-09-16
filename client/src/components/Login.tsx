@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   Container,
-  Paper,
   TextField,
   Button,
   Typography,
@@ -14,7 +13,7 @@ import {
   DialogContent,
   DialogActions
 } from '@mui/material';
-import { Lock as LockIcon } from '@mui/icons-material';
+import { Gavel as GavelIcon } from '@mui/icons-material';
 
 interface LoginProps {
   onLogin: (token: string, user: any) => void;
@@ -162,13 +161,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <Container maxWidth="sm" sx={{ mt: 8 }}>
+    <Container maxWidth="sm" sx={{ mt: { xs: 4, sm: 8 }, px: { xs: 2, sm: 3 } }}>
       <Card>
-        <CardContent sx={{ p: 4 }}>
+        <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
-            <LockIcon sx={{ fontSize: 40, color: 'primary.main', mb: 2 }} />
-            <Typography variant="h4" component="h1" gutterBottom>
-              Admin Legal Bot
+            <GavelIcon sx={{ fontSize: 40, color: 'primary.main', mb: 2 }} />
+            <Typography variant="h4" component="h1" gutterBottom sx={{ fontSize: { xs: '1.8rem', sm: '2.125rem' } }}>
+              Temis
             </Typography>
             <Typography variant="body2" color="text.secondary" align="center">
               Faça login para acessar o painel de administração

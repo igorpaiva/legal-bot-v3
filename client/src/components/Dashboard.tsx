@@ -37,7 +37,7 @@ interface StatsCardProps {
 }
 
 const StatsCard: React.FC<StatsCardProps> = ({ title, value, icon, color, subtitle }) => (
-  <Card sx={{ minWidth: 275, m: 1 }}>
+  <Card sx={{ minWidth: { xs: '100%', sm: 275 }, m: 1, width: { xs: '100%', sm: 'auto' } }}>
     <CardContent>
       <Box display="flex" alignItems="center" justifyContent="space-between">
         <Box>
@@ -99,7 +99,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus, user }) => {
         Dashboard
       </Typography>
       
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around' }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: { xs: 'center', sm: 'space-around' }, gap: 1 }}>
         <StatsCard
           title="Total Bots"
           value={bots.length}
@@ -141,8 +141,8 @@ const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus, user }) => {
         />
       </Box>
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 2 }}>
-        <Card sx={{ minWidth: 400, m: 1, flex: 1 }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 2, gap: 1 }}>
+        <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
           <CardContent>
             <Typography variant="h6" gutterBottom>
               Bot Status Overview
@@ -174,7 +174,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bots, systemStatus, user }) => {
           </CardContent>
         </Card>
 
-        <Card sx={{ minWidth: 400, m: 1, flex: 1 }}>
+        <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
           <CardContent>
             <Typography variant="h6" gutterBottom>
               System Configuration

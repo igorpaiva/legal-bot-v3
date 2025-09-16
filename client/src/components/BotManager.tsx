@@ -25,7 +25,6 @@ import {
   Delete,
   QrCode,
   Phone,
-  Message,
   Error,
   CheckCircle,
   Schedule
@@ -114,7 +113,7 @@ const BotCard: React.FC<{
   };
 
   return (
-    <Card sx={{ minWidth: 300, m: 1 }}>
+    <Card sx={{ minWidth: { xs: '100%', sm: 300 }, m: 1, maxWidth: '100%' }}>
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
           <Avatar sx={{ mr: 2, bgcolor: getStatusColor(bot.status) === 'success' ? '#25D366' : '#ccc' }}>
@@ -275,7 +274,7 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 2, sm: 0 } }}>
         <Box>
           <Typography variant="h4">
             Gerenciamento de Bots
@@ -312,9 +311,9 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
         </>
       )}
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
         {bots.length === 0 ? (
-          <Card sx={{ minWidth: 300, m: 1 }}>
+          <Card sx={{ minWidth: { xs: '100%', sm: 300 }, m: 1, maxWidth: '100%' }}>
             <CardContent>
               <Typography variant="h6" align="center" color="textSecondary">
                 Nenhum bot criado ainda

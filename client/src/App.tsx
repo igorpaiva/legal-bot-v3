@@ -14,8 +14,7 @@ import {
   Tab,
   Button,
   Menu,
-  MenuItem,
-  Avatar
+  MenuItem
 } from '@mui/material';
 import { AccountCircle as AccountIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
 import { io, Socket } from 'socket.io-client';
@@ -33,10 +32,208 @@ const theme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#25D366', // WhatsApp green
+      main: '#1976d2', // Modern blue
+      light: '#42a5f5',
+      dark: '#1565c0',
+      contrastText: '#ffffff',
     },
     secondary: {
-      main: '#128C7E',
+      main: '#2196f3', // Lighter blue
+      light: '#64b5f6',
+      dark: '#1976d2',
+      contrastText: '#ffffff',
+    },
+    background: {
+      default: '#f5f5f5',
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#1e293b',
+      secondary: '#64748b',
+    },
+    success: {
+      main: '#4caf50',
+      light: '#81c784',
+      dark: '#388e3c',
+    },
+    warning: {
+      main: '#ff9800',
+      light: '#ffb74d',
+      dark: '#f57c00',
+    },
+    error: {
+      main: '#f44336',
+      light: '#ef5350',
+      dark: '#d32f2f',
+    },
+  },
+  typography: {
+    fontFamily: '"Poppins", "Roboto", "Helvetica", "Arial", sans-serif',
+    fontWeightLight: 300,
+    fontWeightRegular: 400,
+    fontWeightMedium: 500,
+    fontWeightBold: 600,
+    h1: {
+      fontWeight: 700,
+      fontSize: '2.5rem',
+      lineHeight: 1.2,
+      letterSpacing: '-0.02em',
+    },
+    h2: {
+      fontWeight: 600,
+      fontSize: '2rem',
+      lineHeight: 1.3,
+      letterSpacing: '-0.01em',
+    },
+    h3: {
+      fontWeight: 600,
+      fontSize: '1.75rem',
+      lineHeight: 1.3,
+      letterSpacing: '-0.01em',
+    },
+    h4: {
+      fontWeight: 600,
+      fontSize: '1.5rem',
+      lineHeight: 1.2,
+      letterSpacing: '-0.01em',
+    },
+    h5: {
+      fontWeight: 600,
+      fontSize: '1.25rem',
+      lineHeight: 1.4,
+    },
+    h6: {
+      fontWeight: 600,
+      fontSize: '1.125rem',
+      lineHeight: 1.4,
+    },
+    body1: {
+      fontSize: '1rem',
+      lineHeight: 1.6,
+      fontWeight: 400,
+    },
+    body2: {
+      fontSize: '0.875rem',
+      lineHeight: 1.5,
+      fontWeight: 400,
+    },
+    button: {
+      fontWeight: 500,
+      fontSize: '0.875rem',
+      textTransform: 'none',
+      letterSpacing: '0.01em',
+    },
+    caption: {
+      fontSize: '0.75rem',
+      lineHeight: 1.4,
+      fontWeight: 400,
+    },
+  },
+  shape: {
+    borderRadius: 8,
+  },
+  components: {
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundColor: '#1976d2',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+          boxShadow: 'none',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          '&:hover': {
+            boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+            transform: 'translateY(-1px)',
+          },
+        },
+        contained: {
+          backgroundColor: '#1976d2',
+          '&:hover': {
+            backgroundColor: '#1565c0',
+          },
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          boxShadow: '0 2px 12px rgba(0, 0, 0, 0.08)',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          '&:hover': {
+            boxShadow: '0 8px 25px rgba(0, 0, 0, 0.15)',
+            transform: 'translateY(-2px)',
+          },
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          boxShadow: '0 2px 12px rgba(0, 0, 0, 0.08)',
+        },
+      },
+    },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          '&:hover': {
+            backgroundColor: 'rgba(25, 118, 210, 0.04)',
+            transition: 'background-color 0.2s ease',
+          },
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          fontWeight: 500,
+        },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: {
+          boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)',
+        },
+      },
+    },
+    MuiTabs: {
+      styleOverrides: {
+        root: {
+          backgroundColor: 'rgba(255, 255, 255, 0.8)',
+          backdropFilter: 'blur(10px)',
+        },
+        indicator: {
+          height: 3,
+          backgroundColor: '#1976d2',
+        },
+      },
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+          fontSize: '0.95rem',
+          minHeight: 48,
+          margin: '0 4px',
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            backgroundColor: 'rgba(25, 118, 210, 0.08)',
+          },
+          '&.Mui-selected': {
+            backgroundColor: 'rgba(25, 118, 210, 0.12)',
+            color: '#1976d2',
+          },
+        },
+      },
     },
   },
 });
@@ -65,6 +262,13 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+
+  // Ensure menu is closed when not authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setAnchorEl(null);
+    }
+  }, [isAuthenticated]);
   const [state, setState] = useState<AppState>({
     bots: [],
     systemStatus: null,
@@ -214,6 +418,8 @@ function App() {
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
     setAnchorEl(event.currentTarget);
   };
 
@@ -298,30 +504,97 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{ flexGrow: 1 }}>
-        <AppBar position="static">
-          <Toolbar>
-            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              Painel Admin Legal Bot - {user?.role === 'admin' ? 'Administrador' : user?.lawOfficeName}
-            </Typography>
+        <AppBar position="static" className="fade-in-up">
+          <Toolbar sx={{ py: 1, justifyContent: 'space-between' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Typography 
+                variant="h5" 
+                component="div" 
+                sx={{ 
+                  fontWeight: 700,
+                  color: 'white',
+                  mr: 2,
+                  fontSize: '1.8rem'
+                }}
+              >
+                Temis
+              </Typography>
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  color: 'rgba(255, 255, 255, 0.8)',
+                  fontWeight: 500
+                }}
+              >
+                {user?.role === 'admin' ? 'Administrador' : user?.lawOfficeName}
+              </Typography>
+            </Box>
             
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="body2">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography 
+                variant="body2"
+                sx={{ 
+                  color: 'rgba(255, 255, 255, 0.9)',
+                  fontWeight: 500,
+                  display: { xs: 'none', sm: 'block' }
+                }}
+              >
                 {user?.email}
               </Typography>
               <Button
                 color="inherit"
                 onClick={handleMenuOpen}
                 startIcon={<AccountIcon />}
+                sx={{
+                  borderRadius: 2,
+                  px: 2,
+                  py: 1,
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                    transform: 'translateY(-1px)',
+                  },
+                  transition: 'all 0.3s ease',
+                }}
               >
                 Conta
               </Button>
               <Menu
                 anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
+                open={Boolean(anchorEl) && !!anchorEl}
                 onClose={handleMenuClose}
+                anchorOrigin={{
+                  vertical: 'bottom',
+                  horizontal: 'right',
+                }}
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+                PaperProps={{
+                  sx: {
+                    mt: 1,
+                    borderRadius: 2,
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12)',
+                    backdropFilter: 'blur(10px)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                  }
+                }}
               >
-                <MenuItem onClick={handleLogout}>
-                  <LogoutIcon sx={{ mr: 1 }} />
+                <MenuItem 
+                  onClick={handleLogout}
+                  sx={{
+                    borderRadius: 1,
+                    mx: 1,
+                    my: 0.5,
+                    '&:hover': {
+                      backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                    }
+                  }}
+                >
+                  <LogoutIcon sx={{ mr: 1, color: 'error.main' }} />
                   Sair
                 </MenuItem>
               </Menu>
@@ -329,11 +602,57 @@ function App() {
           </Toolbar>
         </AppBar>
 
-        <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs value={tabValue} onChange={handleTabChange}>
+        <Container maxWidth="xl" sx={{ mt: 4, mb: 4, px: { xs: 1, sm: 2, md: 3 }, maxWidth: '100% !important' }}>
+          <Box 
+            sx={{ 
+              borderBottom: 1, 
+              borderColor: 'rgba(0, 212, 170, 0.2)', 
+              mb: 4,
+              backgroundColor: 'rgba(255, 255, 255, 0.8)',
+              backdropFilter: 'blur(10px)',
+              p: 1,
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+            }}
+            className="slide-in-right"
+          >
+            <Tabs 
+              value={tabValue} 
+              onChange={handleTabChange}
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
+              sx={{
+                '& .MuiTabs-indicator': {
+                  backgroundColor: '#1976d2',
+                },
+                '& .MuiTabs-scrollButtons': {
+                  color: '#1976d2',
+                }
+              }}
+            >
               {getAvailableTabs().map((tab, index) => (
-                <Tab key={tab.key} label={tab.label} />
+                <Tab 
+                  key={tab.key} 
+                  label={tab.label}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    fontSize: '0.95rem',
+                    minHeight: 48,
+                    borderRadius: 2,
+                    mx: 0.5,
+                    transition: 'all 0.3s ease',
+                    '&:hover': {
+                      backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      transform: 'translateY(-1px)',
+                    },
+                    '&.Mui-selected': {
+                      backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                      color: '#1976d2',
+                      boxShadow: '0 2px 8px rgba(0, 212, 170, 0.2)',
+                    },
+                  }}
+                />
               ))}
             </Tabs>
           </Box>
@@ -397,6 +716,10 @@ function App() {
           open={state.notification.open}
           autoHideDuration={6000}
           onClose={closeNotification}
+          anchorOrigin={{
+            vertical: 'bottom',
+            horizontal: 'right',
+          }}
         >
           <Alert 
             onClose={closeNotification} 
