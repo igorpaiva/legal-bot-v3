@@ -97,28 +97,41 @@ export class UserService {
       throw new Error('Only admins can create law office accounts');
     }
 
-    // Check if email already exists
+    // Check if email already exists for an active user
     const existingUser = DatabaseService.getUserByEmail(lawOfficeData.email);
-    if (existingUser) {
+    if (existingUser && existingUser.isActive) {
       throw new Error('Email already exists');
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(lawOfficeData.password, this.SALT_ROUNDS);
 
-    // Create new law office user
-    const newUserData = {
-      id: uuidv4(),
-      email: lawOfficeData.email,
-      password: hashedPassword,
-      role: 'law_office',
-      lawOfficeName: lawOfficeData.lawOfficeName,
-      botCredits: 1, // Default 1 bot credit
-      isActive: true
-    };
+    let createdUser;
+    if (existingUser && !existingUser.isActive) {
+      // Reactivate existing deactivated user with new data
+      const updatedUserData = {
+        password: hashedPassword,
+        role: 'law_office',
+        lawOfficeName: lawOfficeData.lawOfficeName,
+        botCredits: 1, // Default 1 bot credit
+        isActive: true
+      };
+      createdUser = DatabaseService.updateUser(existingUser.id, updatedUserData);
+    } else {
+      // Create new law office user
+      const newUserData = {
+        id: uuidv4(),
+        email: lawOfficeData.email,
+        password: hashedPassword,
+        role: 'law_office',
+        lawOfficeName: lawOfficeData.lawOfficeName,
+        botCredits: 1, // Default 1 bot credit
+        isActive: true
+      };
 
-    // Create user in database
-    const createdUser = DatabaseService.createUser(newUserData);
+      // Create user in database
+      createdUser = DatabaseService.createUser(newUserData);
+    }
 
     // Return user without password
     const userResponse = { ...createdUser };

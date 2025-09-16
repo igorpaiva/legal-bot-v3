@@ -1,12 +1,23 @@
 import express from 'express';
 import { GroqService } from '../services/GroqService.js';
+import { authenticateUser, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Get admin dashboard data
-router.get('/dashboard', (req, res) => {
+router.get('/dashboard', authenticateUser, (req, res) => {
   try {
-    const botStatus = req.botManager.getBotsStatus();
+    let botStatus = req.botManager.getBotsStatus();
+    
+    // Filter bots by user's ownership for law offices
+    if (req.user.role === 'law_office') {
+      const userBots = botStatus.bots.filter(bot => bot.ownerId === req.user.id);
+      botStatus = {
+        total: userBots.length,
+        active: userBots.filter(bot => bot.isActive).length,
+        bots: userBots
+      };
+    }
     
     res.json({
       success: true,
@@ -26,7 +37,7 @@ router.get('/dashboard', (req, res) => {
 });
 
 // Test Groq connection
-router.get('/test-groq', async (req, res) => {
+router.get('/test-groq', authenticateUser, async (req, res) => {
   try {
     const groqService = new GroqService();
     const result = await groqService.testConnection();
@@ -42,7 +53,7 @@ router.get('/test-groq', async (req, res) => {
 });
 
 // Get system configuration
-router.get('/config', (req, res) => {
+router.get('/config', authenticateUser, (req, res) => {
   try {
     res.json({
       success: true,
@@ -68,9 +79,14 @@ router.get('/config', (req, res) => {
 });
 
 // Get bot statistics
-router.get('/stats', (req, res) => {
+router.get('/stats', authenticateUser, (req, res) => {
   try {
-    const bots = req.botManager.getAllBots();
+    let bots = req.botManager.getAllBots();
+    
+    // Filter bots by user's ownership for law offices
+    if (req.user.role === 'law_office') {
+      bots = bots.filter(bot => bot.ownerId === req.user.id);
+    }
     
     const stats = {
       totalBots: bots.length,
@@ -99,7 +115,7 @@ router.get('/stats', (req, res) => {
 });
 
 // Update bot configuration
-router.put('/bot/:id/config', async (req, res) => {
+router.put('/bot/:id/config', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
@@ -121,7 +137,7 @@ router.put('/bot/:id/config', async (req, res) => {
 });
 
 // Bulk operations
-router.post('/bulk/stop', async (req, res) => {
+router.post('/bulk/stop', authenticateUser, async (req, res) => {
   try {
     const { botIds } = req.body;
     
@@ -146,7 +162,7 @@ router.post('/bulk/stop', async (req, res) => {
   }
 });
 
-router.post('/bulk/restart', async (req, res) => {
+router.post('/bulk/restart', authenticateUser, async (req, res) => {
   try {
     const { botIds } = req.body;
     
@@ -171,7 +187,7 @@ router.post('/bulk/restart', async (req, res) => {
   }
 });
 
-router.delete('/bulk/delete', async (req, res) => {
+router.delete('/bulk/delete', authenticateUser, async (req, res) => {
   try {
     const { botIds } = req.body;
     
@@ -197,11 +213,18 @@ router.delete('/bulk/delete', async (req, res) => {
 });
 
 // Get active conversations and triages
-router.get('/triages', (req, res) => {
+router.get('/triages', authenticateUser, (req, res) => {
   try {
     // Buscar triagens persistidas no banco
     const DatabaseService = req.botManager.database;
-    const triages = DatabaseService.getAllTriages();
+    
+    // Para usuários law_office, filtrar apenas dados do seu escritório
+    let triages;
+    if (req.user.role === 'law_office') {
+      triages = DatabaseService.getTriagesByOwner(req.user.id);
+    } else {
+      triages = DatabaseService.getAllTriages();
+    }
 
     // Buscar dados da conversa para cada triage de forma otimizada
     const conversationsMap = new Map();
@@ -209,6 +232,11 @@ router.get('/triages', (req, res) => {
 
     // Mapear conversas e bots de uma só vez (memória)
     for (const bot of req.botManager.bots.values()) {
+      // Para usuários law_office, só incluir bots do seu escritório
+      if (req.user.role === 'law_office' && bot.ownerId !== req.user.id) {
+        continue;
+      }
+      
       botsMap.set(bot.id, bot);
       if (bot.conversationFlowService) {
         const convs = bot.conversationFlowService.getAllConversations();
@@ -223,9 +251,15 @@ router.get('/triages', (req, res) => {
     }
 
     // Adicionar conversas persistidas do banco
-    const persistedConvs = DatabaseService.db.prepare('SELECT * FROM conversations').all();
+    let persistedConvs;
+    if (req.user.role === 'law_office') {
+      persistedConvs = DatabaseService.getConversationsByOwner(req.user.id);
+    } else {
+      persistedConvs = DatabaseService.db.prepare('SELECT * FROM conversations').all().map(conv => DatabaseService.formatConversation(conv));
+    }
+    
     for (const conv of persistedConvs) {
-      const formattedConv = DatabaseService.formatConversation(conv);
+      const formattedConv = conv;
       if (!conversationsMap.has(formattedConv.id)) {
         conversationsMap.set(formattedConv.id, {
           ...formattedConv,
@@ -236,8 +270,7 @@ router.get('/triages', (req, res) => {
       }
     }
 
-    // Filtrar triagens do escritório atual
-    const lawOfficeId = req.user?.lawOfficeId;
+    // Remover filtro duplicado - já filtramos acima
     const seen = new Set();
     const triageList = triages
       .map(triage => {
@@ -246,10 +279,7 @@ router.get('/triages', (req, res) => {
           console.warn(`Conversa não encontrada para triage ${triage.id}`);
           return null;
         }
-        // Só incluir triagens do escritório atual
-        if (lawOfficeId && conv.ownerId !== lawOfficeId) {
-          return null;
-        }
+        
         // Buscar nome do escritório
         let lawOfficeName = 'N/A';
         if (conv.ownerId) {
@@ -361,7 +391,7 @@ router.get('/triages', (req, res) => {
 });
 
 // Analyze legal case manually (admin function)
-router.post('/analyze-case', async (req, res) => {
+router.post('/analyze-case', authenticateUser, async (req, res) => {
   try {
     const { description, phone } = req.body;
     
@@ -402,7 +432,7 @@ router.post('/analyze-case', async (req, res) => {
 });
 
 // Export all data for backup
-router.get('/export-data', async (req, res) => {
+router.get('/export-data', authenticateUser, async (req, res) => {
   try {
     const botManager = req.botManager;
     if (!botManager || !botManager.persistence) {
@@ -430,7 +460,7 @@ router.get('/export-data', async (req, res) => {
 });
 
 // Save current state manually
-router.post('/save-state', async (req, res) => {
+router.post('/save-state', authenticateUser, async (req, res) => {
   try {
     const botManager = req.botManager;
     if (!botManager) {
@@ -457,7 +487,7 @@ router.post('/save-state', async (req, res) => {
 });
 
 // Get persistence statistics
-router.get('/persistence-stats', async (req, res) => {
+router.get('/persistence-stats', authenticateUser, async (req, res) => {
   try {
     const botManager = req.botManager;
     if (!botManager || !botManager.persistence) {
@@ -467,8 +497,22 @@ router.get('/persistence-stats', async (req, res) => {
       });
     }
     
-    const botConfigs = await botManager.persistence.loadBotConfigs();
-    const conversations = await botManager.persistence.loadConversations();
+    let botConfigs = await botManager.persistence.loadBotConfigs();
+    let conversations = await botManager.persistence.loadConversations();
+    
+    // Filter by owner for law office users
+    if (req.user.role === 'law_office') {
+      botConfigs = botConfigs.filter(bot => bot.ownerId === req.user.id);
+      // Filter conversations by bot ownership
+      const userBotIds = new Set(botConfigs.map(bot => bot.id));
+      const filteredConversations = new Map();
+      for (const [convId, conv] of conversations.entries()) {
+        if (userBotIds.has(conv.botId)) {
+          filteredConversations.set(convId, conv);
+        }
+      }
+      conversations = filteredConversations;
+    }
     
     const stats = {
       totalBots: botConfigs.length,

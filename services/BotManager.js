@@ -18,8 +18,18 @@ export class BotManager {
     this.initializingBots = new Set(); // Track bots being initialized to prevent conflicts
     this.database = DatabaseService; // Adiciona referência ao DatabaseService
 
+    // Sistema de reconexão robusto
+    this.reconnectionManager = new Map(); // Track reconnection attempts per bot
+    this.gracefulShutdown = false; // Flag para graceful shutdown
+
     // Load persisted bots on startup
     this.loadPersistedData();
+
+    // Configurar graceful shutdown
+    this.setupGracefulShutdown();
+
+    // Iniciar monitoramento periódico de bots stuck
+    this.startStuckBotMonitoring();
   }
 
   // Load persisted bots and conversations
@@ -52,6 +62,285 @@ export class BotManager {
     } catch (error) {
       console.error('Error loading persisted data:', error);
     }
+  }
+
+  // Configurar graceful shutdown
+  setupGracefulShutdown() {
+    const shutdown = async (signal) => {
+      console.log(`[${signal}] Recebido sinal de shutdown. Iniciando graceful shutdown...`);
+      this.gracefulShutdown = true;
+
+      try {
+        // Desconectar todos os bots graciosamente
+        const shutdownPromises = [];
+        for (const [botId, botData] of this.bots.entries()) {
+          if (botData.client && botData.isActive) {
+            console.log(`[${signal}] Desconectando bot ${botId}...`);
+            shutdownPromises.push(
+              this.gracefulBotShutdown(botId)
+                .catch(error => console.error(`[${signal}] Erro ao desconectar bot ${botId}:`, error))
+            );
+          }
+        }
+
+        // Aguardar todas as desconexões (máximo 30 segundos)
+        await Promise.race([
+          Promise.all(shutdownPromises),
+          new Promise(resolve => setTimeout(resolve, 30000))
+        ]);
+
+        console.log(`[${signal}] Graceful shutdown concluído.`);
+        process.exit(0);
+      } catch (error) {
+        console.error(`[${signal}] Erro durante graceful shutdown:`, error);
+        process.exit(1);
+      }
+    };
+
+    // Registrar handlers para sinais de shutdown
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGUSR2', () => shutdown('SIGUSR2')); // Para nodemon restart
+
+    // Handler para uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('[CRITICAL] Uncaught Exception:', error);
+      shutdown('UNCAUGHT_EXCEPTION');
+    });
+
+    // Handler para unhandled promise rejections
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+      shutdown('UNHANDLED_REJECTION');
+    });
+  }
+
+  // Graceful shutdown para um bot específico
+  async gracefulBotShutdown(botId) {
+    const bot = this.bots.get(botId);
+    if (!bot) return;
+
+    try {
+      console.log(`[GRACEFUL] Iniciando shutdown do bot ${botId}`);
+
+      // Cancelar qualquer tentativa de reconexão pendente
+      const reconnManager = this.reconnectionManager.get(botId);
+      if (reconnManager?.timeoutId) {
+        clearTimeout(reconnManager.timeoutId);
+        reconnManager.timeoutId = null;
+      }
+
+      // Salvar estado final antes de desconectar
+      await this.saveBotState(botId);
+
+      // Desconectar cliente WhatsApp
+      if (bot.client) {
+        // Aguardar desconexão completa (máximo 10 segundos)
+        await Promise.race([
+          bot.client.destroy(),
+          new Promise(resolve => setTimeout(resolve, 10000))
+        ]);
+        console.log(`[GRACEFUL] Cliente do bot ${botId} desconectado`);
+      }
+
+      // Limpar estado do bot
+      bot.isActive = false;
+      bot.status = 'shutdown';
+
+      console.log(`[GRACEFUL] Bot ${botId} shutdown concluído`);
+    } catch (error) {
+      console.error(`[GRACEFUL] Erro no shutdown do bot ${botId}:`, error);
+      throw error;
+    }
+  }
+
+  // Salvar estado de um bot específico
+  async saveBotState(botId) {
+    const bot = this.bots.get(botId);
+    if (!bot) return;
+
+    try {
+      DatabaseService.updateBot(botId, {
+        name: bot.name,
+        assistantName: bot.assistantName,
+        status: bot.status,
+        phoneNumber: bot.phoneNumber,
+        isActive: bot.isActive,
+        messageCount: bot.messageCount,
+        lastActivity: bot.lastActivity ? bot.lastActivity.toISOString() : null
+      });
+      console.log(`[GRACEFUL] Estado do bot ${botId} salvo com sucesso`);
+    } catch (error) {
+      console.error(`[GRACEFUL] Erro ao salvar estado do bot ${botId}:`, error);
+    }
+  }
+
+  // Sistema de reconexão com backoff exponencial
+  async handleReconnection(botId, error) {
+    if (this.gracefulShutdown) return;
+
+    const bot = this.bots.get(botId);
+    if (!bot) return;
+
+    let reconnManager = this.reconnectionManager.get(botId);
+    if (!reconnManager) {
+      reconnManager = {
+        attempts: 0,
+        maxAttempts: 10,
+        baseDelay: 1000, // 1 segundo
+        maxDelay: 300000, // 5 minutos
+        timeoutId: null
+      };
+      this.reconnectionManager.set(botId, reconnManager);
+    }
+
+    // Cancelar tentativa anterior se existir
+    if (reconnManager.timeoutId) {
+      clearTimeout(reconnManager.timeoutId);
+      reconnManager.timeoutId = null;
+    }
+
+    reconnManager.attempts++;
+
+    // Se excedeu tentativas máximas, parar
+    if (reconnManager.attempts > reconnManager.maxAttempts) {
+      console.error(`[RECONNECT] Bot ${botId} excedeu ${reconnManager.maxAttempts} tentativas de reconexão. Abortando.`);
+      bot.status = 'failed';
+      await this.saveBotState(botId);
+      return;
+    }
+
+    // Calcular delay com backoff exponencial + jitter
+    const exponentialDelay = Math.min(
+      reconnManager.baseDelay * Math.pow(2, reconnManager.attempts - 1),
+      reconnManager.maxDelay
+    );
+    const jitter = Math.random() * 0.1 * exponentialDelay; // ±10% jitter
+    const delay = exponentialDelay + jitter;
+
+    console.log(`[RECONNECT] Tentativa ${reconnManager.attempts}/${reconnManager.maxAttempts} para bot ${botId} em ${Math.round(delay/1000)}s. Erro: ${error?.message || error}`);
+
+    // Agendar reconexão
+    reconnManager.timeoutId = setTimeout(async () => {
+      try {
+        await this.attemptReconnection(botId);
+      } catch (reconnectError) {
+        console.error(`[RECONNECT] Falha na tentativa ${reconnManager.attempts} para bot ${botId}:`, reconnectError);
+        // Tentar novamente se não for graceful shutdown
+        if (!this.gracefulShutdown) {
+          this.handleReconnection(botId, reconnectError);
+        }
+      }
+    }, delay);
+  }
+
+  // Tentar reconectar um bot específico
+  async attemptReconnection(botId) {
+    const bot = this.bots.get(botId);
+    if (!bot || this.gracefulShutdown) return;
+
+    console.log(`[RECONNECT] Iniciando reconexão do bot ${botId}`);
+
+    try {
+      // Destruir cliente antigo se existir
+      if (bot.client) {
+        try {
+          await bot.client.destroy();
+        } catch (destroyError) {
+          console.warn(`[RECONNECT] Erro ao destruir cliente antigo do bot ${botId}:`, destroyError);
+        }
+      }
+
+      // Resetar estado
+      bot.status = 'reconnecting';
+      bot.isActive = false;
+
+      // Criar novo cliente
+      const client = new Client({
+        authStrategy: new LocalAuth({
+          clientId: botId,
+          dataPath: path.join(__dirname, '../sessions')
+        }),
+        puppeteer: {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
+          ]
+        }
+      });
+
+      // Configurar eventos para reconexão
+      this.setupBotEvents(botId, client);
+
+      // Iniciar cliente
+      await client.initialize();
+
+      // Atualizar estado
+      bot.client = client;
+      bot.status = 'connected';
+      bot.isActive = true;
+      bot.lastActivity = new Date();
+
+      // Resetar contador de reconexões
+      const reconnManager = this.reconnectionManager.get(botId);
+      if (reconnManager) {
+        reconnManager.attempts = 0;
+        reconnManager.timeoutId = null;
+      }
+
+      console.log(`[RECONNECT] Bot ${botId} reconectado com sucesso`);
+
+      // Salvar estado
+      await this.saveBotState(botId);
+
+    } catch (error) {
+      console.error(`[RECONNECT] Falha ao reconectar bot ${botId}:`, error);
+      throw error;
+    }
+  }
+
+  // Detectar e recuperar bots stuck em "initializing"
+  async detectAndRecoverStuckBots() {
+    if (this.gracefulShutdown) return;
+
+    const now = Date.now();
+    const stuckThreshold = 5 * 60 * 1000; // 5 minutos
+
+    for (const [botId, bot] of this.bots.entries()) {
+      if (bot.status === 'initializing' && bot.lastActivity) {
+        const timeSinceActivity = now - bot.lastActivity.getTime();
+
+        if (timeSinceActivity > stuckThreshold) {
+          console.warn(`[RECOVERY] Bot ${botId} stuck em 'initializing' por ${Math.round(timeSinceActivity/1000)}s. Iniciando recovery.`);
+
+          try {
+            await this.gracefulBotShutdown(botId);
+            setTimeout(() => this.handleReconnection(botId, new Error('Bot stuck in initializing')), 1000);
+          } catch (error) {
+            console.error(`[RECOVERY] Erro ao recuperar bot stuck ${botId}:`, error);
+          }
+        }
+      }
+    }
+  }
+
+  // Iniciar monitoramento periódico de bots stuck
+  startStuckBotMonitoring() {
+    // Executar a cada 5 minutos
+    setInterval(() => {
+      if (!this.gracefulShutdown) {
+        this.detectAndRecoverStuckBots();
+      }
+    }, 5 * 60 * 1000);
+
+    console.log('[MONITOR] Monitoramento de bots stuck iniciado (intervalo: 5 minutos)');
   }
 
   // Restore a bot from configuration
@@ -510,6 +799,58 @@ export class BotManager {
         });
       } catch (error) {
         console.error(`Error updating bot ${id} disconnection in database:`, error);
+      }
+
+      // Iniciar reconexão automática se não for graceful shutdown
+      if (!this.gracefulShutdown && reason !== 'Client destroyed') {
+        console.log(`[RECONNECT] Iniciando reconexão automática para bot ${id} após desconexão: ${reason}`);
+        setTimeout(() => this.handleReconnection(id, new Error(`Disconnected: ${reason}`)), 5000);
+      }
+    });
+
+    // Evento para capturar erros críticos do cliente
+    client.on('error', (error) => {
+      console.error(`Bot ${id} client error:`, error);
+
+      // Verificar se é erro de protocolo que requer reconexão
+      if (error.message && error.message.includes('ProtocolError') ||
+          error.message && error.message.includes('Target closed') ||
+          error.message && error.message.includes('Session closed')) {
+
+        console.log(`[RECONNECT] Erro crítico detectado para bot ${id}, iniciando reconexão: ${error.message}`);
+        botData.status = 'error';
+        botData.error = error.message;
+        botData.isActive = false;
+        this.emitBotUpdate(id);
+
+        // Iniciar reconexão com delay maior para erros críticos
+        if (!this.gracefulShutdown) {
+          setTimeout(() => this.handleReconnection(id, error), 10000);
+        }
+      } else {
+        // Para outros erros, apenas logar
+        botData.error = error.message;
+        this.emitBotUpdate(id);
+      }
+    });
+
+    // Evento para detectar quando o bot fica stuck
+    client.on('change_state', (state) => {
+      console.log(`Bot ${id} state changed to: ${state}`);
+      botData.lastActivity = new Date();
+
+      // Se ficar muito tempo em INITIALIZING, marcar para recovery
+      if (state === 'INITIALIZING') {
+        botData.status = 'initializing';
+        this.emitBotUpdate(id);
+
+        // Agendar verificação de stuck após 2 minutos
+        setTimeout(() => {
+          if (botData.status === 'initializing' && !this.gracefulShutdown) {
+            console.warn(`[RECOVERY] Bot ${id} ainda em INITIALIZING após 2 minutos, marcando para recovery`);
+            this.handleReconnection(id, new Error('Stuck in INITIALIZING state'));
+          }
+        }, 120000);
       }
     });
 

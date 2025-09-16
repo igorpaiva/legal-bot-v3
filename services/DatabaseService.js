@@ -202,10 +202,68 @@ class DatabaseService {
     return stmt.all().map(user => this.formatUser(user));
   }
 
+  getUserById(userId) {
+    const stmt = this.db.prepare('SELECT * FROM users WHERE id = ?');
+    const user = stmt.get(userId);
+    return user ? this.formatUser(user) : null;
+  }
+
+  getUserByEmail(email) {
+    const stmt = this.db.prepare('SELECT * FROM users WHERE email = ?');
+    const user = stmt.get(email);
+    return user ? this.formatUser(user) : null;
+  }
+
+  createUser(userData) {
+    const stmt = this.db.prepare(`
+      INSERT INTO users (id, email, password, role, law_office_name, bot_credits, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const result = stmt.run(
+      userData.id,
+      userData.email,
+      userData.password,
+      userData.role,
+      userData.lawOfficeName || null,
+      userData.botCredits || 0,
+      userData.isActive !== false ? 1 : 0
+    );
+    
+    // Return the created user data
+    return this.getUserById(userData.id);
+  }
+
+  updateUser(userId, updates) {
+    // Convert boolean values to integers for SQLite
+    const sanitizedUpdates = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'boolean') {
+        sanitizedUpdates[key] = value ? 1 : 0;
+      } else {
+        sanitizedUpdates[key] = value;
+      }
+    }
+    
+    const setClause = Object.keys(sanitizedUpdates).map(key => `${this.camelToSnake(key)} = ?`).join(', ');
+    const values = Object.values(sanitizedUpdates);
+    
+    const stmt = this.db.prepare(`
+      UPDATE users 
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+    
+    const result = stmt.run(...values, userId);
+    
+    // Return the updated user data
+    return this.getUserById(userId);
+  }
+
   getLawOffices() {
     const stmt = this.db.prepare(`
       SELECT * FROM users 
-      WHERE role = 'law_office' 
+      WHERE role = 'law_office' AND is_active = 1
       ORDER BY created_at DESC
     `);
     return stmt.all().map(user => this.formatUser(user));
@@ -568,6 +626,25 @@ class DatabaseService {
     getAllTriages() {
       const stmt = this.db.prepare('SELECT * FROM triages ORDER BY created_at DESC');
       return stmt.all();
+    }
+
+    getTriagesByOwner(ownerId) {
+      const stmt = this.db.prepare(`
+        SELECT t.* FROM triages t
+        INNER JOIN conversations c ON t.conversation_id = c.id
+        WHERE c.owner_id = ?
+        ORDER BY t.created_at DESC
+      `);
+      return stmt.all(ownerId);
+    }
+
+    getConversationsByOwner(ownerId) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM conversations
+        WHERE owner_id = ?
+        ORDER BY start_time DESC
+      `);
+      return stmt.all(ownerId).map(conv => this.formatConversation(conv));
     }
 
   static getLawyerCount() {
