@@ -94,6 +94,8 @@ export class BotManager {
         lastMessageTimes: new Map(), // Track user message timing for spam prevention
         error: null,
         isRestoring: true, // Flag to indicate this is a restoration
+        restorationTimeout: null, // Timeout handle for restoration attempts
+        restorationAttempts: 0, // Counter for restoration attempts
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this), // Pass assistant name and botManager
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
