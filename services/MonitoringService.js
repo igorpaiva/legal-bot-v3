@@ -505,10 +505,10 @@ class MonitoringService {
   storeMetrics(category, metrics) {
     try {
       DatabaseService.db.prepare(`
-        INSERT INTO system_logs (level, source, message, data, timestamp)
+        INSERT INTO system_logs (level, category, message, metadata, created_at)
         VALUES (?, ?, ?, ?, ?)
       `).run(
-        'info',
+        'INFO',
         category,
         'System metrics collected',
         JSON.stringify(metrics),
@@ -525,14 +525,14 @@ class MonitoringService {
   logAlert(alert) {
     try {
       DatabaseService.db.prepare(`
-        INSERT INTO system_logs (level, source, message, data, timestamp)
+        INSERT INTO system_logs (level, category, message, metadata, created_at)
         VALUES (?, ?, ?, ?, ?)
       `).run(
-        alert.severity === 'CRITICAL' ? 'error' : 'warn',
+        alert.severity === 'CRITICAL' ? 'ERROR' : 'WARN',
         'ALERT',
         alert.message,
         JSON.stringify(alert),
-        alert.timestamp
+        alert.timestamp || new Date().toISOString()
       );
     } catch (error) {
       console.error('Error logging alert:', error);
@@ -545,10 +545,10 @@ class MonitoringService {
   logError(category, message, error) {
     try {
       DatabaseService.db.prepare(`
-        INSERT INTO system_logs (level, source, message, data, timestamp)
+        INSERT INTO system_logs (level, category, message, metadata, created_at)
         VALUES (?, ?, ?, ?, ?)
       `).run(
-        'error',
+        'ERROR',
         category,
         message,
         JSON.stringify({
@@ -601,10 +601,10 @@ class MonitoringService {
       
       // Store report
       DatabaseService.db.prepare(`
-        INSERT INTO system_logs (level, source, message, data, timestamp)
+        INSERT INTO system_logs (level, category, message, metadata, created_at)
         VALUES (?, ?, ?, ?, ?)
       `).run(
-        'info',
+        'INFO',
         'DAILY_REPORT',
         `Daily monitoring report for ${report.date}`,
         JSON.stringify(report),
