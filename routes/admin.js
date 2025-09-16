@@ -199,81 +199,164 @@ router.delete('/bulk/delete', async (req, res) => {
 // Get active conversations and triages
 router.get('/triages', (req, res) => {
   try {
-    // Get conversations from all bots
-    const allConversations = [];
-    
-    for (const [botId, bot] of req.botManager.bots) {
-      if (bot.client && bot.isActive && bot.conversationFlowService) {
-        const botConversations = bot.conversationFlowService.getAllConversations();
-        botConversations.forEach(conversation => {
-          allConversations.push({
-            ...conversation,
-            botId,
-            botName: bot.name,
-            startTime: conversation.startedAt,
-            lastActivity: conversation.lastActivityAt
+    // Buscar triagens persistidas no banco
+    const DatabaseService = req.botManager.database;
+    const triages = DatabaseService.getAllTriages();
+
+    // Buscar dados da conversa para cada triage de forma otimizada
+    const conversationsMap = new Map();
+    const botsMap = new Map();
+
+    // Mapear conversas e bots de uma só vez (memória)
+    for (const bot of req.botManager.bots.values()) {
+      botsMap.set(bot.id, bot);
+      if (bot.conversationFlowService) {
+        const convs = bot.conversationFlowService.getAllConversations();
+        for (const conv of convs) {
+          conversationsMap.set(conv.id, {
+            ...conv,
+            botName: bot.name || bot.id,
+            lawOfficeName: bot.lawOfficeName || bot.name
           });
-        });
-      }
-    }
-
-    // Sort by start time (newest first)
-    allConversations.sort((a, b) => {
-      return new Date(b.startTime) - new Date(a.startTime);
-    });
-
-    res.json({
-      success: true,
-      triages: allConversations,
-      stats: {
-        total: allConversations.length,
-        byState: allConversations.reduce((acc, t) => {
-          acc[t.state] = (acc[t.state] || 0) + 1;
-          return acc;
-        }, {}),
-        byCategory: allConversations.reduce((acc, t) => {
-          const category = t.triageAnalysis?.case?.category || 'Outros';
-          acc[category] = (acc[category] || 0) + 1;
-          return acc;
-        }, {})
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get specific conversation details
-router.get('/triages/:contactId', (req, res) => {
-  try {
-    const { contactId } = req.params;
-    
-    // Find the conversation in any bot
-    let conversationData = null;
-    let botInfo = null;
-    
-    for (const [botId, bot] of req.botManager.bots) {
-      if (bot.client && bot.isActive && bot.conversationFlowService) {
-        const data = bot.conversationFlowService.getConversation(contactId);
-        if (data) {
-          conversationData = data;
-          botInfo = { id: botId, name: bot.name };
-          break;
         }
       }
     }
 
-    if (!conversationData) {
-      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    // Adicionar conversas persistidas do banco
+    const persistedConvs = DatabaseService.db.prepare('SELECT * FROM conversations').all();
+    for (const conv of persistedConvs) {
+      const formattedConv = DatabaseService.formatConversation(conv);
+      if (!conversationsMap.has(formattedConv.id)) {
+        conversationsMap.set(formattedConv.id, {
+          ...formattedConv,
+          botName: formattedConv.botId || 'N/A',
+          lawOfficeName: formattedConv.lawOfficeName || 'N/A',
+          ownerId: formattedConv.ownerId || null
+        });
+      }
     }
+
+    // Filtrar triagens do escritório atual
+    const lawOfficeId = req.user?.lawOfficeId;
+    const seen = new Set();
+    const triageList = triages
+      .map(triage => {
+        const conv = conversationsMap.get(triage.conversation_id);
+        if (!conv) {
+          console.warn(`Conversa não encontrada para triage ${triage.id}`);
+          return null;
+        }
+        // Só incluir triagens do escritório atual
+        if (lawOfficeId && conv.ownerId !== lawOfficeId) {
+          return null;
+        }
+        // Buscar nome do escritório
+        let lawOfficeName = 'N/A';
+        if (conv.ownerId) {
+          const userStmt = DatabaseService.db.prepare('SELECT law_office_name FROM users WHERE id = ?');
+          const user = userStmt.get(conv.ownerId);
+          lawOfficeName = user?.law_office_name || 'N/A';
+        }
+        // Buscar nome do bot
+        let botName = 'N/A';
+        if (conv.botId) {
+          const botStmt = DatabaseService.db.prepare('SELECT name FROM bots WHERE id = ?');
+          const bot = botStmt.get(conv.botId);
+          botName = bot?.name || conv.botId || 'N/A';
+        }
+        // Parse da análise de triagem com tratamento de erro
+        let triageAnalysis = null;
+        try {
+          triageAnalysis = triage.triage_json ? JSON.parse(triage.triage_json) : null;
+        } catch (error) {
+          console.error(`Erro ao fazer parse da análise da triage ${triage.id}:`, error);
+          triageAnalysis = null;
+        }
+        // Função helper para extrair dados do cliente
+        const getClientData = () => ({
+          name: triageAnalysis?.client?.name || conv.clientName || 'N/A',
+          phone: triageAnalysis?.client?.phone || conv.clientPhone || 'N/A',
+          email: triageAnalysis?.client?.email || conv.clientEmail || 'N/A'
+        });
+        // Função helper para dados do caso
+        const getCaseData = () => ({
+          category: triageAnalysis?.case?.category || 'N/A',
+          description: triageAnalysis?.case?.description || 'N/A',
+          date: triageAnalysis?.case?.date || 'N/A',
+          documents: triageAnalysis?.case?.documents || []
+        });
+        // Função helper para dados da triagem
+        const getTriageData = () => ({
+          confidence: triageAnalysis?.triage?.confidence || 0,
+          escalate: triageAnalysis?.triage?.escalate || false,
+          recommended_action: triageAnalysis?.triage?.recommended_action || 'N/A',
+          flags: triageAnalysis?.triage?.flags || []
+        });
+        // Função helper para solução legal
+        const getLegalSolutionData = () => ({
+          summary: triageAnalysis?.legal_solution?.summary || 'N/A',
+          legal_basis: triageAnalysis?.legal_solution?.legal_basis || 'N/A',
+          success_probability: triageAnalysis?.legal_solution?.success_probability || 'N/A',
+          recommended_actions: triageAnalysis?.legal_solution?.recommended_actions || 'N/A',
+          timeline: triageAnalysis?.legal_solution?.timeline || 'N/A',
+          estimated_costs: triageAnalysis?.legal_solution?.estimated_costs || 'N/A',
+          required_documents: triageAnalysis?.legal_solution?.required_documents || 'N/A',
+          risks_and_alternatives: triageAnalysis?.legal_solution?.risks_and_alternatives || 'N/A'
+        });
+        return {
+          id: `${triage.conversation_id}-${triage.id}`,
+          client: getClientData(),
+          lawOfficeName,
+          state: conv.status ? conv.status.toUpperCase() : 'COMPLETED',
+          startTime: conv.startTime || triage.created_at || new Date().toISOString(),
+          botName,
+          triageAnalysis: {
+            client: getClientData(),
+            case: getCaseData(),
+            triage: getTriageData(),
+            legal_solution: getLegalSolutionData()
+          }
+        };
+      })
+      .filter(triage => {
+        if (!triage || seen.has(triage.id)) {
+          return false;
+        }
+        seen.add(triage.id);
+        return true;
+      });
+
+    // Calcular estatísticas
+    const stats = {
+      total: triageList.length,
+      byState: triageList.reduce((acc, t) => {
+        acc[t.state] = (acc[t.state] || 0) + 1;
+        return acc;
+      }, {}),
+      byCategory: triageList.reduce((acc, t) => {
+        const category = t.triageAnalysis?.case?.category || 'Outros';
+        acc[category] = (acc[category] || 0) + 1;
+        return acc;
+      }, {}),
+      byBot: triageList.reduce((acc, t) => {
+        acc[t.botName] = (acc[t.botName] || 0) + 1;
+        return acc;
+      }, {})
+    };
 
     res.json({
       success: true,
-      conversation: conversationData,
-      bot: botInfo
+      triages: triageList,
+      stats
     });
+
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erro ao buscar triagens:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erro interno do servidor',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -413,4 +496,5 @@ router.get('/persistence-stats', async (req, res) => {
   }
 });
 
+// Export default para ES modules
 export default router;

@@ -604,16 +604,15 @@ class PdfGenerationService {
   async generateConversationPdf(conversation, officeName = 'V3') {
     let page = null;
     let retries = 2;
-    
+    console.log('[PDF] Dados recebidos para geração:', JSON.stringify(conversation, null, 2));
     while (retries > 0) {
       try {
         await this.initialize();
-        
         page = await this.browser.newPage();
         const html = this.generateConversationHtml(conversation, officeName);
-        
+        console.log('[PDF] HTML gerado para PDF:', html.substring(0, 1000)); // Mostra só o início para não poluir
         await page.setContent(html, { waitUntil: 'networkidle0' });
-        
+        console.log('[PDF] Conteúdo HTML setado na página Puppeteer');
         const pdf = await page.pdf({
           format: 'A4',
           margin: {
@@ -624,33 +623,26 @@ class PdfGenerationService {
           },
           printBackground: true
         });
-        
+        console.log('[PDF] PDF gerado. Tipo:', typeof pdf, 'Tamanho:', pdf?.length);
         await page.close();
+        console.log('[PDF] Página Puppeteer fechada após geração do PDF');
         return pdf;
-        
       } catch (error) {
-        console.error(`Error generating conversation PDF (attempt ${3 - retries}):`, error.message);
-        
-        // Clean up page if it exists
+        console.error(`[PDF] Erro ao gerar PDF (tentativa ${3 - retries}):`, error);
         if (page) {
           try {
             await page.close();
           } catch (closeError) {
-            console.log('Error closing page:', closeError.message);
+            console.log('[PDF] Erro ao fechar página:', closeError.message);
           }
         }
-        
-        // Force browser reconnection on connection errors
         if (error.message.includes('Connection closed') || error.message.includes('Target closed')) {
           this.browser = null;
         }
-        
         retries--;
         if (retries === 0) {
           throw error;
         }
-        
-        // Wait before retry
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }

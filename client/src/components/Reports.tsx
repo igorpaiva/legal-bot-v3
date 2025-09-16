@@ -198,8 +198,12 @@ const Reports: React.FC<ReportsProps> = () => {
       let filename: string;
       
       if (conversation) {
-        // Single conversation PDF
-        url = `/api/pdf/conversation/${conversation.id}`;
+        // Se o id for no formato "conversaId-triageId", extrai só o id da conversa
+        let conversationId = conversation.id;
+        if (conversationId.includes('-')) {
+          conversationId = conversationId.split('-')[0];
+        }
+        url = `/api/pdf/conversation/${conversationId}`;
         filename = `relatorio-${(conversation.client.name || 'cliente').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
       } else {
         // Summary PDF

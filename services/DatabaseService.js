@@ -7,6 +7,36 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 class DatabaseService {
+  /**
+   * Recupera uma conversa pelo id
+   */
+  getConversationById(conversationId) {
+    const stmt = this.db.prepare('SELECT * FROM conversations WHERE id = ?');
+    const conversation = stmt.get(conversationId);
+    return this.formatConversation(conversation);
+  }
+  /**
+   * Atualiza uma conversa existente no banco de dados.
+   * @param {string} conversationId
+   * @param {object} updates - Campos para atualizar
+   */
+  updateConversation(conversationId, updates) {
+    const allowedFields = ['status', 'legalField', 'urgency', 'summary', 'clientName', 'clientPhone', 'startTime'];
+    const setClauses = [];
+    const values = [];
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) {
+        setClauses.push(`${this.camelToSnake(field)} = ?`);
+        values.push(updates[field]);
+      }
+    }
+    if (setClauses.length === 0) return 0;
+    setClauses.push('updated_at = CURRENT_TIMESTAMP');
+    const sql = `UPDATE conversations SET ${setClauses.join(', ')} WHERE id = ?`;
+    values.push(conversationId);
+    const stmt = this.db.prepare(sql);
+    return stmt.run(...values);
+  }
   constructor() {
     this.dbPath = path.join(process.cwd(), 'data', 'legal-bot.db');
     this.schemaPath = path.join(process.cwd(), 'database', 'schema.sql');
@@ -58,6 +88,44 @@ class DatabaseService {
         }
       } else {
         console.log('Database already initialized with', tableCount, 'tables');
+        // MIGRATION: Create missing tables from schema.sql if not present
+        if (fs.existsSync(this.schemaPath)) {
+          const schema = fs.readFileSync(this.schemaPath, 'utf-8');
+          const tableRegex = /CREATE TABLE ([^\s(]+)[^;]*;/g;
+          let match;
+          while ((match = tableRegex.exec(schema)) !== null) {
+            const tableName = match[1];
+            const exists = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(tableName);
+            if (!exists) {
+              console.log(`[MIGRATION] Creating missing table: ${tableName}`);
+              // Extrai o SQL completo da tabela
+              const tableSqlMatch = new RegExp(`CREATE TABLE ${tableName}[^;]*;`, 'i').exec(schema);
+              if (tableSqlMatch) {
+                this.db.exec(tableSqlMatch[0]);
+                console.log(`[MIGRATION] Table created: ${tableName}`);
+              }
+            }
+          }
+        }
+        // MIGRATION: Apply all .sql files in migrations folder
+        const migrationsDir = path.join(process.cwd(), 'migrations');
+        if (fs.existsSync(migrationsDir)) {
+          const migrationFiles = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
+          for (const file of migrationFiles) {
+            const migrationPath = path.join(migrationsDir, file);
+            const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
+            try {
+              this.db.exec(migrationSql);
+              console.log(`[MIGRATION] Applied migration: ${file}`);
+            } catch (err) {
+              if (String(err).includes('duplicate column name')) {
+                console.log(`[MIGRATION] Column already exists, skipping: ${file}`);
+              } else {
+                console.error(`[MIGRATION] Error applying migration ${file}:`, err);
+              }
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Schema initialization error:', error);
@@ -267,20 +335,25 @@ class DatabaseService {
   // Conversation operations
   createConversation(conversationData) {
     const stmt = this.db.prepare(`
-      INSERT INTO conversations (id, bot_id, client_phone, client_name, status, legal_field, urgency, start_time, summary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO conversations (
+        id, bot_id, owner_id, client_phone, client_name, client_email, status, legal_field, urgency, start_time, end_time, summary, lawyer_notified, notified_lawyer_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
     return stmt.run(
       conversationData.id,
       conversationData.botId,
+      conversationData.ownerId || null,
       conversationData.clientPhone,
       conversationData.clientName || null,
+      conversationData.clientEmail || null,
       conversationData.status || 'active',
       conversationData.legalField || null,
       conversationData.urgency || null,
       conversationData.startTime || new Date().toISOString(),
-      conversationData.summary || null
+      conversationData.endTime || null,
+      conversationData.summary || null,
+      typeof conversationData.lawyerNotified === 'boolean' ? conversationData.lawyerNotified : 0,
+      conversationData.notifiedLawyerId || null
     );
   }
 
@@ -477,6 +550,25 @@ class DatabaseService {
       return 0;
     }
   }
+
+    // Triage operations
+    createTriage({ id, conversationId, triageJson }) {
+      const stmt = this.db.prepare(`
+        INSERT INTO triages (id, conversation_id, triage_json)
+        VALUES (?, ?, ?)
+      `);
+      return stmt.run(id, conversationId, triageJson);
+    }
+
+    getTriageByConversationId(conversationId) {
+      const stmt = this.db.prepare('SELECT * FROM triages WHERE conversation_id = ? ORDER BY created_at DESC');
+      return stmt.get(conversationId);
+    }
+
+    getAllTriages() {
+      const stmt = this.db.prepare('SELECT * FROM triages ORDER BY created_at DESC');
+      return stmt.all();
+    }
 
   static getLawyerCount() {
     try {

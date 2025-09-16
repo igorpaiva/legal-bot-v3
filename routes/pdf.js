@@ -57,7 +57,26 @@ router.get('/conversation/:conversationId', async (req, res) => {
     }
     
     if (!conversation) {
-      return res.status(404).json({ error: 'Conversation not found' });
+      // Buscar no banco de dados
+      const dbConversation = DatabaseService.getConversationById(conversationId);
+      if (!dbConversation) {
+        return res.status(404).json({ error: 'Conversation not found (DB)' });
+      }
+      // Buscar triagem associada
+      const triage = DatabaseService.getTriageByConversationId(conversationId);
+      // Montar objeto no formato esperado pelo PDF
+      conversation = {
+        id: dbConversation.id,
+        client: {
+          name: dbConversation.clientName || 'N/A',
+          phone: dbConversation.clientPhone || 'N/A',
+          email: dbConversation.clientEmail || 'N/A'
+        },
+        state: dbConversation.status || 'COMPLETED',
+        startTime: dbConversation.startTime,
+        triageAnalysis: triage ? (triage.triage_json ? JSON.parse(triage.triage_json) : null) : null,
+        botName: dbConversation.botName || dbConversation.botId || 'N/A'
+      };
     }
     
     // Get dynamic office name
@@ -67,10 +86,12 @@ router.get('/conversation/:conversationId', async (req, res) => {
     
     const filename = `relatorio-${(conversation.client.name || 'cliente').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
     
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', pdf.length);
-    res.end(pdf, 'binary');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', pdf.length);
+  console.log('[PDF-ENDPOINT] Enviando PDF:', filename, 'Tamanho:', pdf?.length);
+  console.log('[PDF-ENDPOINT] Headers:', res.getHeaders());
+  res.end(pdf, 'binary');
   } catch (error) {
     console.error('Error generating conversation PDF:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
@@ -99,10 +120,12 @@ router.get('/summary', async (req, res) => {
     
     const filename = `relatorio-geral-${new Date().toISOString().split('T')[0]}.pdf`;
     
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', pdf.length);
-    res.end(pdf, 'binary');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', pdf.length);
+  console.log('[PDF-ENDPOINT] Enviando PDF resumo:', filename, 'Tamanho:', pdf?.length);
+  console.log('[PDF-ENDPOINT] Headers:', res.getHeaders());
+  res.end(pdf, 'binary');
   } catch (error) {
     console.error('Error generating summary PDF:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });

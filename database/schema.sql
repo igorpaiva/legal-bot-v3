@@ -46,8 +46,10 @@ CREATE TABLE lawyers (
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     bot_id TEXT NOT NULL,
+    owner_id TEXT,
     client_phone TEXT NOT NULL,
     client_name TEXT,
+    client_email TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
     legal_field TEXT,
     urgency TEXT,
@@ -109,7 +111,6 @@ CREATE INDEX idx_bot_stats_date ON bot_stats(date);
 CREATE INDEX idx_system_logs_timestamp ON system_logs(timestamp);
 CREATE INDEX idx_system_logs_level ON system_logs(level);
 
--- Triggers for updated_at timestamps
 CREATE TRIGGER update_users_timestamp 
     AFTER UPDATE ON users
     BEGIN
@@ -121,3 +122,15 @@ CREATE TRIGGER update_lawyers_timestamp
     BEGIN
         UPDATE lawyers SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
     END;
+
+-- Triages table: stores full JSON triage analysis for each conversation
+CREATE TABLE triages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    triage_json TEXT NOT NULL, -- Full JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_triages_conversation_id ON triages(conversation_id);

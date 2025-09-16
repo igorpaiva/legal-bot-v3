@@ -16,7 +16,8 @@ export class BotManager {
     this.io = io;
     this.bots = new Map(); // Initialize the bots Map
     this.initializingBots = new Set(); // Track bots being initialized to prevent conflicts
-    
+    this.database = DatabaseService; // Adiciona referência ao DatabaseService
+
     // Load persisted bots on startup
     this.loadPersistedData();
   }
