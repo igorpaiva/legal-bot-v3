@@ -263,8 +263,8 @@ class DatabaseService {
   getLawOffices() {
     const stmt = this.db.prepare(`
       SELECT * FROM users 
-      WHERE role = 'law_office' AND is_active = 1
-      ORDER BY created_at DESC
+      WHERE role = 'law_office'
+      ORDER BY is_active DESC, created_at DESC
     `);
     return stmt.all().map(user => this.formatUser(user));
   }

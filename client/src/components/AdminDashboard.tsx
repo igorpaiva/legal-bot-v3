@@ -21,7 +21,9 @@ import {
   Alert,
   Chip,
   IconButton,
-  Tooltip
+  Tooltip,
+  Switch,
+  FormControlLabel
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -29,6 +31,7 @@ import {
   SmartToy as BotIcon,
   AccountBox as UserIcon,
   TrendingUp as TrendingUpIcon,
+  Edit as EditIcon,
   Delete as DeleteIcon
 } from '@mui/icons-material';
 
@@ -243,6 +246,32 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleToggleLawOfficeStatus = async (officeId: string) => {
+    try {
+      setError('');
+      const token = localStorage.getItem('authToken');
+      
+      const response = await fetch(`/api/auth/law-offices/${officeId}/toggle-active`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to toggle law office status');
+      }
+
+      const result = await response.json();
+      setSuccess(result.message);
+      await loadDashboardData();
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       email: '',
@@ -423,19 +452,33 @@ const AdminDashboard: React.FC = () => {
                     />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={office.isActive ? 'Ativo' : 'Inativo'}
-                      color={office.isActive ? 'success' : 'default'}
-                      size="small"
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={office.isActive}
+                          onChange={() => handleToggleLawOfficeStatus(office.id)}
+                          color="primary"
+                        />
+                      }
+                      label=""
                     />
                   </TableCell>
                   <TableCell>{formatDate(office.createdAt)}</TableCell>
                   <TableCell>
-                    <Tooltip title="Deactivate Law Office">
+                    <Tooltip title="Editar Escritório">
                       <IconButton
+                        size="small"
+                        onClick={() => {/* TODO: Implement edit functionality */}}
+                        sx={{ mr: 1 }}
+                      >
+                        <EditIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Excluir Escritório">
+                      <IconButton
+                        size="small"
                         color="error"
                         onClick={() => handleDeactivateLawOffice(office.id)}
-                        disabled={!office.isActive}
                       >
                         <DeleteIcon />
                       </IconButton>

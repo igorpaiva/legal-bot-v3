@@ -102,10 +102,56 @@ function App() {
     
     setState(prev => ({ ...prev, socket }));
 
+    // Load bots via API as fallback while socket connects
+    const loadBotsViaAPI = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        if (!token) return;
+
+        const response = await fetch(`${process.env.REACT_APP_SERVER_URL || 'http://localhost:3001'}/api/admin/dashboard`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            console.log('Loaded bots via API:', data.data.bots);
+            setState(prev => ({ ...prev, bots: data.data.bots }));
+          }
+        }
+      } catch (error) {
+        console.error('Error loading bots via API:', error);
+      }
+    };
+
+    // Load bots immediately via API
+    loadBotsViaAPI();
+
     // Socket event listeners
     socket.on('connect', () => {
       console.log('Connected to server');
       showNotification('Connected to server', 'success');
+      
+      // Authenticate socket with token
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        console.log('Authenticating socket with token:', token.substring(0, 20) + '...');
+        socket.emit('authenticate', { token });
+      } else {
+        console.error('No token found for socket authentication');
+      }
+    });
+
+    socket.on('authenticated', (data) => {
+      console.log('Socket authenticated successfully:', data);
+    });
+
+    socket.on('auth-error', (error) => {
+      console.error('Socket authentication failed:', error);
+      showNotification('Socket authentication failed', 'error');
     });
 
     socket.on('disconnect', () => {

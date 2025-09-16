@@ -152,4 +152,39 @@ router.delete('/law-offices/:id', authenticateUser, requireAdmin, async (req, re
   }
 });
 
+// PATCH /api/auth/law-offices/:id/toggle-active - Toggle law office active status (admin only)
+router.patch('/law-offices/:id/toggle-active', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find law office
+    const lawOffice = DatabaseService.getUserById(id);
+    if (!lawOffice || lawOffice.role !== 'law_office') {
+      return res.status(404).json({ error: 'Law office not found' });
+    }
+
+    // Toggle active status
+    const newActiveStatus = !lawOffice.isActive;
+    DatabaseService.updateUser(id, { isActive: newActiveStatus });
+
+    // Get updated law office data
+    const updatedLawOffice = DatabaseService.getUserById(id);
+    
+    res.json({
+      message: `Law office ${newActiveStatus ? 'activated' : 'deactivated'} successfully`,
+      lawOffice: {
+        id: updatedLawOffice.id,
+        email: updatedLawOffice.email,
+        lawOfficeName: updatedLawOffice.law_office_name,
+        isActive: updatedLawOffice.isActive,
+        botCredits: updatedLawOffice.bot_credits
+      }
+    });
+
+  } catch (error) {
+    console.error('Toggle law office status error:', error);
+    res.status(500).json({ error: 'Failed to toggle law office status' });
+  }
+});
+
 export default router;

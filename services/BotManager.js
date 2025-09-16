@@ -41,8 +41,9 @@ export class BotManager {
       const botConfigs = DatabaseService.getAllBots();
       
       for (const config of botConfigs) {
-        // Try to restore bots that were previously active or authenticated
-        if (config.isActive || config.status === 'ready' || config.status === 'authenticated') {
+        // Try to restore bots that were previously active, authenticated, or in initialization process
+        if (config.isActive || config.status === 'ready' || config.status === 'authenticated' || 
+            config.status === 'initializing' || config.status === 'waiting_for_scan') {
           console.log(`Restoring bot: ${config.name} (${config.id}) - Status: ${config.status}`);
           await this.restoreBot(config);
           
@@ -259,7 +260,7 @@ export class BotManager {
       const client = new Client({
         authStrategy: new LocalAuth({
           clientId: botId,
-          dataPath: path.join(__dirname, '../sessions')
+          dataPath: './sessions'
         }),
         puppeteer: {
           headless: true,
@@ -277,7 +278,7 @@ export class BotManager {
       });
 
       // Configurar eventos para reconexão
-      this.setupBotEvents(botId, client);
+      this.setupBotEvents(bot);
 
       // Iniciar cliente
       await client.initialize();
@@ -302,6 +303,25 @@ export class BotManager {
 
     } catch (error) {
       console.error(`[RECONNECT] Falha ao reconectar bot ${botId}:`, error);
+      
+      // Handle specific Puppeteer errors during reconnection
+      if (error.message && error.message.includes('Protocol error (Runtime.callFunctionOn): Target closed')) {
+        console.log(`[RECONNECT] Puppeteer target closed error during reconnection for bot ${botId}. Cleaning session.`);
+        
+        // Clean the corrupted session
+        try {
+          await this.cleanBotSession(botId);
+          console.log(`[RECONNECT] Session cleaned for bot ${botId} due to Puppeteer error`);
+        } catch (cleanError) {
+          console.error(`[RECONNECT] Error cleaning session for bot ${botId}:`, cleanError);
+        }
+        
+        // Update status to force fresh initialization
+        bot.status = 'initializing';
+        bot.isActive = false;
+        this.emitBotUpdate(botId);
+      }
+      
       throw error;
     }
   }
@@ -408,6 +428,32 @@ export class BotManager {
       
     } catch (error) {
       console.error(`Error restoring bot ${config.id}:`, error);
+      
+      // Handle specific Puppeteer errors
+      if (error.message && error.message.includes('Protocol error (Runtime.callFunctionOn): Target closed')) {
+        console.log(`Puppeteer target closed error for bot ${config.id}. This usually means the browser session was corrupted. Cleaning session and marking for fresh start.`);
+        
+        // Clean the corrupted session immediately
+        try {
+          await this.cleanBotSession(config.id);
+          console.log(`Session cleaned for bot ${config.id} due to Puppeteer error`);
+        } catch (cleanError) {
+          console.error(`Error cleaning session for bot ${config.id}:`, cleanError);
+        }
+        
+        // Update the config to force fresh initialization
+        DatabaseService.updateBot(config.id, {
+          isActive: false,
+          status: 'initializing',
+          lastActivity: new Date().toISOString()
+        });
+        
+        // Remove from memory if it exists
+        this.bots.delete(config.id);
+        
+        return null; // Don't return bot data for corrupted sessions
+      }
+      
       // Update the config to mark as inactive if restoration fails
       DatabaseService.updateBot(config.id, {
         isActive: false,
@@ -562,19 +608,21 @@ export class BotManager {
         console.error(`Error saving bot to database:`, error);
       }
       
-      // Emit bot created event
-      this.io.emit('bot-created', {
-        id: botData.id,
-        name: botData.name,
-        status: botData.status,
-        phoneNumber: botData.phoneNumber,
-        isActive: botData.isActive,
-        messageCount: botData.messageCount,
-        lastActivity: botData.lastActivity,
-        createdAt: botData.createdAt,
-        qrCode: botData.qrCode,
-        error: botData.error
-      });
+      // Emit bot created event only to the owner
+      if (botData.ownerId) {
+        this.io.to(botData.ownerId).emit('bot-created', {
+          id: botData.id,
+          name: botData.name,
+          status: botData.status,
+          phoneNumber: botData.phoneNumber,
+          isActive: botData.isActive,
+          messageCount: botData.messageCount,
+          lastActivity: botData.lastActivity,
+          createdAt: botData.createdAt,
+          qrCode: botData.qrCode,
+          error: botData.error
+        });
+      }
       
       await client.initialize();
       this.emitBotUpdate(botId);
@@ -1261,8 +1309,17 @@ export class BotManager {
   }
 
   async deleteBot(botId) {
+    const bot = this.bots.get(botId);
     const success = await this.stopBot(botId);
     if (success) {
+      // Clean up the bot session directory
+      try {
+        await this.cleanBotSession(botId);
+        console.log(`Session cleaned up for deleted bot ${botId}`);
+      } catch (error) {
+        console.error(`Error cleaning session for bot ${botId}:`, error);
+      }
+
       this.bots.delete(botId);
       // Remove bot from database
       try {
@@ -1270,7 +1327,11 @@ export class BotManager {
       } catch (error) {
         console.error(`Error deleting bot ${botId} from database:`, error);
       }
-      this.io.emit('bot-deleted', { botId });
+
+      // Emit bot deleted event only to the owner
+      if (bot && bot.ownerId) {
+        this.io.to(bot.ownerId).emit('bot-deleted', { botId });
+      }
     }
     return success;
   }
@@ -1306,8 +1367,9 @@ export class BotManager {
 
   emitBotUpdate(botId) {
     const bot = this.bots.get(botId);
-    if (bot) {
-      this.io.emit('bot-updated', {
+    if (bot && bot.ownerId) {
+      // Send update only to the bot owner
+      this.io.to(bot.ownerId).emit('bot-updated', {
         id: bot.id,
         name: bot.name,
         status: bot.status,

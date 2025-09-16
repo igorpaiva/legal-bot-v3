@@ -148,13 +148,59 @@ app.use(errorHandler);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('Admin client connected:', socket.id);
+  console.log('Client connected:', socket.id);
   
-  // Send current bot status to new connection
-  socket.emit('bots-status', botManager.getBotsStatus());
+  // Handle authentication
+  socket.on('authenticate', async (data) => {
+    try {
+      const { token } = data;
+      
+      if (!token) {
+        socket.emit('auth-error', { message: 'No token provided' });
+        return;
+      }
+      
+      // Verify JWT token
+      const jwt = await import('jsonwebtoken');
+      const decoded = jwt.default.verify(token, process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production');
+      
+      // Get user from database
+      const user = DatabaseService.getUserById(decoded.id);
+      if (!user) {
+        socket.emit('auth-error', { message: 'User not found' });
+        return;
+      }
+      
+      // Join user to their own room
+      socket.join(user.id);
+      socket.userId = user.id;
+      socket.user = user;
+      
+      console.log(`User ${user.email} authenticated and joined room ${user.id}`);
+      
+      // Send filtered bot status to authenticated user
+      let botStatus = botManager.getBotsStatus();
+      
+      if (user.role === 'law_office') {
+        const userBots = botStatus.bots.filter(bot => bot.ownerId === user.id);
+        botStatus = {
+          total: userBots.length,
+          active: userBots.filter(bot => bot.isActive).length,
+          bots: userBots
+        };
+      }
+      
+      socket.emit('bots-status', botStatus);
+      socket.emit('authenticated', { user: { id: user.id, email: user.email, role: user.role } });
+      
+    } catch (error) {
+      console.error('WebSocket authentication error:', error);
+      socket.emit('auth-error', { message: 'Authentication failed' });
+    }
+  });
   
   socket.on('disconnect', () => {
-    console.log('Admin client disconnected:', socket.id);
+    console.log('Client disconnected:', socket.id, socket.userId ? `(user: ${socket.userId})` : '');
   });
 });
 
