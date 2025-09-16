@@ -8,7 +8,11 @@ import {
   Box,
   Alert,
   Card,
-  CardContent
+  CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import { Lock as LockIcon } from '@mui/icons-material';
 
@@ -23,12 +27,93 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [firstLoginData, setFirstLoginData] = useState<any>(null);
+  const [passwordSetupData, setPasswordSetupData] = useState({
+    password: '',
+    confirmPassword: ''
+  });
+  const [settingPassword, setSettingPassword] = useState(false);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+  };
+
+  const handlePasswordSetupChange = (field: string, value: string) => {
+    setPasswordSetupData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleSetFirstPassword = async () => {
+    if (passwordSetupData.password !== passwordSetupData.confirmPassword) {
+      setError('As senhas não coincidem');
+      return;
+    }
+
+    if (passwordSetupData.password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres');
+      return;
+    }
+
+    try {
+      setSettingPassword(true);
+      setError('');
+
+      const response = await fetch('/api/auth/set-first-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: firstLoginData.user.id,
+          password: passwordSetupData.password
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to set password');
+      }
+
+      // Now login normally with the new password
+      const loginResponse = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          password: passwordSetupData.password
+        })
+      });
+
+      const loginData = await loginResponse.json();
+
+      if (!loginResponse.ok) {
+        throw new Error(loginData.error || 'Login failed after password setup');
+      }
+
+      // Store token and user data
+      localStorage.setItem('authToken', loginData.token);
+      localStorage.setItem('userData', JSON.stringify(loginData.user));
+      
+      onLogin(loginData.token, loginData.user);
+
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
+  const handleClosePasswordSetup = () => {
+    setFirstLoginData(null);
+    setPasswordSetupData({ password: '', confirmPassword: '' });
+    setError('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -55,6 +140,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
       if (!response.ok) {
         throw new Error(data.error || 'Login failed');
+      }
+
+      // Check if user needs to set password on first login
+      if (data.requiresPasswordSetup) {
+        setFirstLoginData(data);
+        return;
       }
 
       // Store token and user data
@@ -130,6 +221,57 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </Box>
         </CardContent>
       </Card>
+
+      {/* First Login Password Setup Dialog */}
+      <Dialog open={!!firstLoginData} onClose={handleClosePasswordSetup} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          🔐 Definir Senha de Acesso
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Bem-vindo! Esta é a sua primeira vez fazendo login. 
+            Por favor, defina uma senha segura para sua conta.
+          </Typography>
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          <TextField
+            fullWidth
+            label="Nova Senha"
+            type="password"
+            value={passwordSetupData.password}
+            onChange={(e) => handlePasswordSetupChange('password', e.target.value)}
+            margin="normal"
+            required
+            autoFocus
+          />
+          <TextField
+            fullWidth
+            label="Confirmar Senha"
+            type="password"
+            value={passwordSetupData.confirmPassword}
+            onChange={(e) => handlePasswordSetupChange('confirmPassword', e.target.value)}
+            margin="normal"
+            required
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleClosePasswordSetup} disabled={settingPassword}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleSetFirstPassword}
+            variant="contained"
+            disabled={settingPassword || !passwordSetupData.password || !passwordSetupData.confirmPassword}
+          >
+            {settingPassword ? 'Definindo...' : 'Definir Senha'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

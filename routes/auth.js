@@ -1,5 +1,6 @@
 import express from 'express';
 import { generateToken, authenticateUser, requireAdmin } from '../middleware/auth.js';
+import DatabaseService from '../services/DatabaseService.js';
 
 const router = express.Router();
 
@@ -15,6 +16,20 @@ router.post('/login', async (req, res) => {
     const user = await req.userService.authenticateUser(email, password);
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Check if user needs to set password
+    if (user.requiresPasswordSetup) {
+      return res.status(200).json({
+        message: 'First login - password setup required',
+        requiresPasswordSetup: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          lawOfficeName: user.lawOfficeName
+        }
+      });
     }
 
     const token = generateToken(user);
@@ -47,25 +62,58 @@ router.get('/me', authenticateUser, async (req, res) => {
   }
 });
 
+// POST /api/auth/set-first-password - Set password on first login
+router.post('/set-first-password', async (req, res) => {
+  try {
+    const { userId, password } = req.body;
+
+    if (!userId || !password || password.length < 6) {
+      return res.status(400).json({ error: 'User ID and password (min 6 characters) are required' });
+    }
+
+    // Verify user exists and needs password setup
+    const user = await req.userService.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.passwordSet) {
+      return res.status(400).json({ error: 'Password already set' });
+    }
+
+    await req.userService.setFirstPassword(userId, password);
+
+    res.json({ message: 'Password set successfully' });
+
+  } catch (error) {
+    console.error('Set first password error:', error);
+    
+    if (error.message.includes('Password already set') || error.message.includes('User not found')) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.status(500).json({ error: 'Failed to set password' });
+  }
+});
+
 // POST /api/auth/law-offices - Create law office account (admin only)
 router.post('/law-offices', authenticateUser, requireAdmin, async (req, res) => {
   try {
-    const { email, password, lawOfficeName } = req.body;
+    const { email, lawOfficeName } = req.body;
 
-    if (!email || !password || !lawOfficeName) {
+    if (!email || !lawOfficeName) {
       return res.status(400).json({ 
-        error: 'Email, password, and law office name are required' 
+        error: 'Email and law office name are required' 
       });
     }
 
     const newLawOffice = await req.userService.createLawOffice(req.user.id, {
       email,
-      password,
       lawOfficeName
     });
 
     res.status(201).json({
-      message: 'Law office account created successfully',
+      message: 'Law office account created successfully. User will set their password on first login.',
       lawOffice: newLawOffice
     });
 
@@ -132,6 +180,50 @@ router.put('/law-offices/:id/bot-credits', authenticateUser, requireAdmin, async
   }
 });
 
+// PUT /api/auth/law-offices/:id - Update law office (admin only)
+router.put('/law-offices/:id', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lawOfficeName, password } = req.body;
+    
+    // Find law office
+    const lawOffice = DatabaseService.getUserById(id);
+    if (!lawOffice || lawOffice.role !== 'law_office') {
+      return res.status(404).json({ error: 'Law office not found' });
+    }
+
+    // Prepare update data
+    const updateData = {};
+    if (lawOfficeName) updateData.law_office_name = lawOfficeName;
+    if (password) {
+      const bcrypt = await import('bcrypt');
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      DatabaseService.updateUser(id, updateData);
+    }
+
+    // Get updated law office data
+    const updatedLawOffice = DatabaseService.getUserById(id);
+    
+    res.json({
+      message: 'Law office updated successfully',
+      lawOffice: {
+        id: updatedLawOffice.id,
+        email: updatedLawOffice.email,
+        lawOfficeName: updatedLawOffice.law_office_name,
+        isActive: updatedLawOffice.is_active,
+        botCredits: updatedLawOffice.bot_credits
+      }
+    });
+
+  } catch (error) {
+    console.error('Update law office error:', error);
+    res.status(500).json({ error: 'Failed to update law office' });
+  }
+});
+
 // DELETE /api/auth/law-offices/:id - Deactivate law office (admin only)
 router.delete('/law-offices/:id', authenticateUser, requireAdmin, async (req, res) => {
   try {
@@ -149,6 +241,29 @@ router.delete('/law-offices/:id', authenticateUser, requireAdmin, async (req, re
     }
 
     res.status(500).json({ error: 'Failed to deactivate law office account' });
+  }
+});
+
+// DELETE /api/auth/law-offices/:id/permanent - Permanently delete law office (admin only)
+router.delete('/law-offices/:id/permanent', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find law office
+    const lawOffice = DatabaseService.getUserById(id);
+    if (!lawOffice || lawOffice.role !== 'law_office') {
+      return res.status(404).json({ error: 'Law office not found' });
+    }
+
+    // Permanently delete the user
+    DatabaseService.deleteUser(id);
+
+    res.json({ message: 'Law office account permanently deleted successfully' });
+
+  } catch (error) {
+    console.error('Delete law office error:', error);
+    
+    res.status(500).json({ error: 'Failed to delete law office account' });
   }
 });
 

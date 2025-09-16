@@ -7,6 +7,7 @@ export class User {
     this.lawOfficeName = data.lawOfficeName;
     this.botCredits = data.botCredits || (data.role === 'law_office' ? 1 : 0);
     this.isActive = data.isActive !== undefined ? data.isActive : true;
+    this.passwordSet = data.passwordSet !== undefined ? data.passwordSet : false;
     this.createdAt = data.createdAt || new Date().toISOString();
     this.updatedAt = data.updatedAt || new Date().toISOString();
     this.createdBy = data.createdBy; // Admin ID who created this account
@@ -47,6 +48,7 @@ export class User {
       lawOfficeName: this.lawOfficeName,
       botCredits: this.botCredits,
       isActive: this.isActive,
+      passwordSet: this.passwordSet,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       createdBy: this.createdBy

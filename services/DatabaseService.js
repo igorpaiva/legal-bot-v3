@@ -225,9 +225,9 @@ class DatabaseService {
       userData.email,
       userData.password,
       userData.role,
-      userData.lawOfficeName || null,
-      userData.botCredits || 0,
-      userData.isActive !== false ? 1 : 0
+      userData.law_office_name || userData.lawOfficeName || null,
+      userData.bot_credits || userData.botCredits || 0,
+      userData.is_active !== false && userData.isActive !== false ? 1 : 0
     );
     
     // Return the created user data
@@ -284,6 +284,11 @@ class DatabaseService {
       SET is_active = 0, updated_at = CURRENT_TIMESTAMP 
       WHERE id = ?
     `);
+    return stmt.run(userId);
+  }
+
+  deleteUser(userId) {
+    const stmt = this.db.prepare('DELETE FROM users WHERE id = ?');
     return stmt.run(userId);
   }
 
@@ -449,6 +454,7 @@ class DatabaseService {
       lawOfficeName: user.law_office_name,
       botCredits: user.bot_credits,
       isActive: Boolean(user.is_active),
+      passwordSet: Boolean(user.password_set),
       createdAt: user.created_at,
       updatedAt: user.updated_at
     };

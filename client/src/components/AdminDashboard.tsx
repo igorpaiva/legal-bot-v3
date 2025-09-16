@@ -23,7 +23,8 @@ import {
   IconButton,
   Tooltip,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -54,7 +55,6 @@ interface SystemMetrics {
 
 interface FormData {
   email: string;
-  password: string;
   lawOfficeName: string;
   botCredits: number;
 }
@@ -72,9 +72,11 @@ const AdminDashboard: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingOffice, setEditingOffice] = useState<LawOffice | null>(null);
+  const [togglingOffice, setTogglingOffice] = useState<string | null>(null);
+  const [animatingOffices, setAnimatingOffices] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<FormData>({
     email: '',
-    password: '',
     lawOfficeName: '',
     botCredits: 1
   });
@@ -153,36 +155,65 @@ const AdminDashboard: React.FC = () => {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  const handleCreateLawOffice = async () => {
+  const handleSubmitLawOffice = async () => {
     try {
       setError('');
       const token = localStorage.getItem('authToken');
       
-      const response = await fetch('/api/auth/law-offices', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: formData.email,
-          password: formData.password,
+      if (editingOffice) {
+        // Update existing law office
+        const updateData: any = {
           lawOfficeName: formData.lawOfficeName
-        })
-      });
+        };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create law office');
+        const response = await fetch(`/api/auth/law-offices/${editingOffice.id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updateData)
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to update law office');
+        }
+
+        // Update bot credits if changed
+        if (formData.botCredits !== editingOffice.botCredits) {
+          await handleUpdateBotCredits(editingOffice.id, formData.botCredits.toString());
+        }
+
+        setSuccess('Law office updated successfully');
+      } else {
+        // Create new law office
+        const response = await fetch('/api/auth/law-offices', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: formData.email,
+            lawOfficeName: formData.lawOfficeName
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to create law office');
+        }
+
+        // Update bot credits after creation
+        const newOfficeData = await response.json();
+        if (formData.botCredits > 0) {
+          await handleUpdateBotCredits(newOfficeData.lawOffice.id, formData.botCredits.toString());
+        }
+
+        setSuccess('Law office created successfully. User will set their password on first login.');
       }
 
-      // Update bot credits after creation
-      const newOfficeData = await response.json();
-      if (formData.botCredits > 0) {
-        await handleUpdateBotCredits(newOfficeData.lawOffice.id, formData.botCredits.toString());
-      }
-
-      setSuccess('Law office created successfully');
       setDialogOpen(false);
       resetForm();
       await loadDashboardData();
@@ -217,8 +248,8 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handleDeactivateLawOffice = async (officeId: string) => {
-    if (!window.confirm('Are you sure you want to deactivate this law office?')) {
+  const handleDeleteLawOffice = async (officeId: string) => {
+    if (!window.confirm('Are you sure you want to PERMANENTLY DELETE this law office? This action cannot be undone and all associated data will be lost.')) {
       return;
     }
 
@@ -226,7 +257,7 @@ const AdminDashboard: React.FC = () => {
       setError('');
       const token = localStorage.getItem('authToken');
       
-      const response = await fetch(`/api/auth/law-offices/${officeId}`, {
+      const response = await fetch(`/api/auth/law-offices/${officeId}/permanent`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -236,10 +267,10 @@ const AdminDashboard: React.FC = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to deactivate law office');
+        throw new Error(errorData.error || 'Failed to delete law office');
       }
 
-      setSuccess('Law office deactivated successfully');
+      setSuccess('Law office permanently deleted successfully');
       await loadDashboardData();
     } catch (error) {
       setError((error as Error).message);
@@ -249,6 +280,8 @@ const AdminDashboard: React.FC = () => {
   const handleToggleLawOfficeStatus = async (officeId: string) => {
     try {
       setError('');
+      setTogglingOffice(officeId);
+      
       const token = localStorage.getItem('authToken');
       
       const response = await fetch(`/api/auth/law-offices/${officeId}/toggle-active`, {
@@ -265,24 +298,53 @@ const AdminDashboard: React.FC = () => {
       }
 
       const result = await response.json();
-      setSuccess(result.message);
-      await loadDashboardData();
+      
+      // Add animation for the office being toggled
+      setAnimatingOffices(prev => new Set(prev).add(officeId));
+      
+      // Wait for animation to complete before updating data
+      setTimeout(async () => {
+        setSuccess(result.message);
+        await loadDashboardData();
+        setTogglingOffice(null);
+        
+        // Remove animation after data reload
+        setTimeout(() => {
+          setAnimatingOffices(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(officeId);
+            return newSet;
+          });
+        }, 300);
+      }, 600);
+      
     } catch (error) {
       setError((error as Error).message);
+      setTogglingOffice(null);
     }
   };
 
   const resetForm = () => {
     setFormData({
       email: '',
-      password: '',
       lawOfficeName: '',
       botCredits: 5
     });
+    setEditingOffice(null);
   };
 
   const openCreateDialog = () => {
     resetForm();
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (office: LawOffice) => {
+    setEditingOffice(office);
+    setFormData({
+      email: office.email,
+      lawOfficeName: office.lawOfficeName,
+      botCredits: office.botCredits
+    });
     setDialogOpen(true);
   };
 
@@ -433,7 +495,15 @@ const AdminDashboard: React.FC = () => {
             </TableHead>
             <TableBody>
               {lawOffices.map((office) => (
-                <TableRow key={office.id}>
+                <TableRow 
+                  key={office.id}
+                  sx={{
+                    opacity: animatingOffices.has(office.id) ? 0.5 : 1,
+                    transform: animatingOffices.has(office.id) ? 'translateY(10px)' : 'translateY(0px)',
+                    transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+                    backgroundColor: animatingOffices.has(office.id) ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                  }}
+                >
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                       <BusinessIcon sx={{ mr: 1, color: 'primary.main' }} />
@@ -454,11 +524,23 @@ const AdminDashboard: React.FC = () => {
                   <TableCell>
                     <FormControlLabel
                       control={
-                        <Switch
-                          checked={office.isActive}
-                          onChange={() => handleToggleLawOfficeStatus(office.id)}
-                          color="primary"
-                        />
+                        togglingOffice === office.id ? (
+                          <CircularProgress size={20} />
+                        ) : (
+                          <Switch
+                            checked={office.isActive}
+                            onChange={() => handleToggleLawOfficeStatus(office.id)}
+                            color="primary"
+                            sx={{
+                              '& .MuiSwitch-switchBase.Mui-checked': {
+                                color: '#4caf50',
+                                '& + .MuiSwitch-track': {
+                                  backgroundColor: '#4caf50',
+                                },
+                              },
+                            }}
+                          />
+                        )
                       }
                       label=""
                     />
@@ -468,17 +550,17 @@ const AdminDashboard: React.FC = () => {
                     <Tooltip title="Editar Escritório">
                       <IconButton
                         size="small"
-                        onClick={() => {/* TODO: Implement edit functionality */}}
+                        onClick={() => openEditDialog(office)}
                         sx={{ mr: 1 }}
                       >
                         <EditIcon />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Excluir Escritório">
+                    <Tooltip title="Excluir Permanentemente">
                       <IconButton
                         size="small"
                         color="error"
-                        onClick={() => handleDeactivateLawOffice(office.id)}
+                        onClick={() => handleDeleteLawOffice(office.id)}
                       >
                         <DeleteIcon />
                       </IconButton>
@@ -502,7 +584,9 @@ const AdminDashboard: React.FC = () => {
 
       {/* Create Law Office Dialog */}
       <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="sm" fullWidth>
-        <DialogTitle>Criar Novo Escritório</DialogTitle>
+        <DialogTitle>
+          {editingOffice ? 'Editar Escritório' : 'Criar Novo Escritório'}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
             <TextField
@@ -520,16 +604,9 @@ const AdminDashboard: React.FC = () => {
               value={formData.email}
               onChange={(e) => handleInputChange('email', e.target.value)}
               margin="normal"
-              required
-            />
-            <TextField
-              fullWidth
-              label="Senha"
-              type="password"
-              value={formData.password}
-              onChange={(e) => handleInputChange('password', e.target.value)}
-              margin="normal"
-              required
+              required={!editingOffice}
+              disabled={!!editingOffice}
+              helperText={editingOffice ? "E-mail não pode ser alterado" : ""}
             />
             <TextField
               fullWidth
@@ -545,11 +622,11 @@ const AdminDashboard: React.FC = () => {
         <DialogActions>
           <Button onClick={closeDialog}>Cancelar</Button>
           <Button
-            onClick={handleCreateLawOffice}
+            onClick={handleSubmitLawOffice}
             variant="contained"
-            disabled={!formData.lawOfficeName || !formData.email || !formData.password}
+            disabled={!formData.lawOfficeName || (!editingOffice && !formData.email)}
           >
-            Criar Escritório
+            {editingOffice ? 'Atualizar Escritório' : 'Criar Escritório'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -42,7 +42,8 @@ export class UserService {
         role: 'admin',
         lawOfficeName: null,
         botCredits: 0,
-        isActive: true
+        isActive: true,
+        passwordSet: true // Admin has a predefined password, no setup needed
       };
 
       DatabaseService.createUser(adminUser);
@@ -81,12 +82,37 @@ export class UserService {
       return null;
     }
 
+    // Check if user needs to set password on first login
+    if (!user.passwordSet) {
+      return { ...user, requiresPasswordSetup: true };
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return null;
     }
 
     return user;
+  }
+
+  // Set password for first-time login
+  async setFirstPassword(userId, newPassword) {
+    const user = DatabaseService.getUserById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (user.passwordSet) {
+      throw new Error('Password already set');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, this.SALT_ROUNDS);
+    DatabaseService.updateUser(userId, {
+      password: hashedPassword,
+      passwordSet: true
+    });
+
+    return true;
   }
 
   // Create new law office account (admin only)
@@ -103,8 +129,9 @@ export class UserService {
       throw new Error('Email already exists');
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(lawOfficeData.password, this.SALT_ROUNDS);
+    // Generate a temporary password (user will set their own on first login)
+    const tempPassword = uuidv4(); // Temporary password, user will change on first login
+    const hashedPassword = await bcrypt.hash(tempPassword, this.SALT_ROUNDS);
 
     let createdUser;
     if (existingUser && !existingUser.isActive) {
@@ -112,9 +139,10 @@ export class UserService {
       const updatedUserData = {
         password: hashedPassword,
         role: 'law_office',
-        lawOfficeName: lawOfficeData.lawOfficeName,
-        botCredits: 1, // Default 1 bot credit
-        isActive: true
+        law_office_name: lawOfficeData.lawOfficeName,
+        bot_credits: 1, // Default 1 bot credit
+        is_active: true,
+        password_set: false // User needs to set password on first login
       };
       createdUser = DatabaseService.updateUser(existingUser.id, updatedUserData);
     } else {
@@ -124,9 +152,10 @@ export class UserService {
         email: lawOfficeData.email,
         password: hashedPassword,
         role: 'law_office',
-        lawOfficeName: lawOfficeData.lawOfficeName,
-        botCredits: 1, // Default 1 bot credit
-        isActive: true
+        law_office_name: lawOfficeData.lawOfficeName,
+        bot_credits: 1, // Default 1 bot credit
+        is_active: true,
+        password_set: false // User needs to set password on first login
       };
 
       // Create user in database
