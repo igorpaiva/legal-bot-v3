@@ -273,8 +273,7 @@ function App() {
       ];
     } else if (user?.role === 'admin') {
       return [
-        { label: 'Painel Admin', key: 'admin-dashboard' },
-        { label: 'Escritórios', key: 'law-offices' }
+        { label: 'Painel Admin', key: 'admin-dashboard' }
       ];
     }
     return [];
@@ -388,10 +387,6 @@ function App() {
           {user?.role === 'admin' && (
             <>
               {getCurrentTabKey() === 'admin-dashboard' && (
-                <AdminDashboard />
-              )}
-
-              {getCurrentTabKey() === 'law-offices' && (
                 <AdminDashboard />
               )}
             </>
