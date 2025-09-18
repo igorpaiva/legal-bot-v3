@@ -37,11 +37,17 @@ class LawyerNotificationService {
   }
 
   // Load lawyers from database
-  async loadLawyers() {
+  async loadLawyers(ownerId = null) {
     try {
-      // Get all lawyers from database
-      const lawyers = this.databaseService.getAllLawyers();
-      console.log(`Loaded ${lawyers.length} lawyers from database`);
+      // Get lawyers filtered by owner (law office) if provided
+      let lawyers;
+      if (ownerId) {
+        lawyers = this.databaseService.getLawyersByOwner(ownerId);
+        console.log(`Loaded ${lawyers.length} lawyers from database for owner ${ownerId}`);
+      } else {
+        lawyers = this.databaseService.getAllLawyers();
+        console.log(`Loaded ${lawyers.length} lawyers from database (all)`);
+      }
       return lawyers;
     } catch (error) {
       console.error('Error loading lawyers:', error);
@@ -50,13 +56,13 @@ class LawyerNotificationService {
   }
 
   // Find active lawyer for a specific legal field
-  async findLawyerForField(legalField) {
+  async findLawyerForField(legalField, ownerId = null) {
     try {
-      const lawyers = await this.loadLawyers();
+      const lawyers = await this.loadLawyers(ownerId);
       
       // Find active lawyers for the specific field
       const activeLawyers = lawyers.filter(
-        lawyer => lawyer.specialty === legalField && lawyer.isActive
+        lawyer => lawyer.legalField === legalField && lawyer.isActive
       );
 
       if (activeLawyers.length === 0) {
@@ -85,8 +91,16 @@ class LawyerNotificationService {
         return false;
       }
 
+      // Get the owner ID from conversation or from the bot
+      let ownerId = conversation.ownerId;
+      if (!ownerId && conversation.botId && botManager.bots.has(conversation.botId)) {
+        ownerId = botManager.bots.get(conversation.botId).ownerId;
+      }
+
       console.log(`Found legal field: ${legalField}`);
-      const lawyer = await this.findLawyerForField(legalField);
+      console.log(`Owner ID: ${ownerId}`);
+      
+      const lawyer = await this.findLawyerForField(legalField, ownerId);
       if (!lawyer) {
         console.warn(`No lawyer found for field: ${legalField}`);
         return false;
@@ -95,7 +109,7 @@ class LawyerNotificationService {
       const lawyerPhone = formatPhoneForWhatsApp(lawyer.phone);
       console.log(`Original lawyer phone: ${lawyer.phone}`);
       console.log(`Formatted lawyer phone: ${lawyerPhone}`);
-      console.log(`Sending PDF to lawyer ${lawyer.name} (${lawyer.specialty}) at ${lawyerPhone}`);
+      console.log(`Sending PDF to lawyer ${lawyer.name} (${lawyer.legalField}) at ${lawyerPhone}`);
 
       // Find an active bot to send the message
       const activeBots = Array.from(botManager.bots.values()).filter(bot => bot.isActive);
@@ -300,10 +314,10 @@ _Enviado automaticamente pelo sistema ${officeName}_`;
 
       lawyers.forEach(lawyer => {
         if (lawyer.isActive) {
-          if (!grouped[lawyer.specialty]) {
-            grouped[lawyer.specialty] = [];
+          if (!grouped[lawyer.legalField]) {
+            grouped[lawyer.legalField] = [];
           }
-          grouped[lawyer.specialty].push(lawyer);
+          grouped[lawyer.legalField].push(lawyer);
         }
       });
 

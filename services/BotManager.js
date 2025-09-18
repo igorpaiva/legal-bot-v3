@@ -2,6 +2,8 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import path from 'path';
 import { GroqService } from './GroqService.js';
 import { HumanLikeDelay } from './HumanLikeDelay.js';
 import { LegalTriageService } from './LegalTriageService.js';
@@ -714,6 +716,97 @@ export class BotManager {
     }
   }
 
+  // Enhanced client configuration for better stability
+  getClientConfig(sessionPath) {
+    return {
+      authStrategy: new LocalAuth({
+        clientId: path.basename(sessionPath),
+        dataPath: sessionPath
+      }),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-features=TranslateUI,BlinkGenPropertyTrees,VizDisplayCompositor',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-ipc-flooding-protection',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-extensions',
+          '--disable-sync',
+          '--disable-translate',
+          '--hide-scrollbars',
+          '--metrics-recording-only',
+          '--mute-audio',
+          '--no-crash-upload',
+          '--disable-component-extensions-with-background-pages',
+          '--disable-domain-reliability',
+          '--disable-client-side-phishing-detection',
+          '--disable-component-update',
+          '--disable-hang-monitor',
+          '--disable-prompt-on-repost',
+          '--force-fieldtrials=SiteIsolationExtensions/Control',
+          '--disable-back-forward-cache',
+          '--disable-popup-blocking',
+          '--disable-print-preview',
+          '--max_old_space_size=4096',
+          '--memory-pressure-off',
+          '--disable-low-end-device-mode',
+          '--disable-backing-store-limit',
+          '--disable-web-security',
+          '--disable-site-isolation-trials',
+          '--user-data-dir=/tmp/whatsapp-session-data',
+          '--aggressive-cache-discard',
+          '--disable-software-rasterizer',
+          '--disable-background-media-suspend',
+          '--disable-plugins',
+          '--run-all-compositor-stages-before-draw',
+          '--disable-checker-imaging',
+          // Additional args to prevent AppState errors
+          '--disable-dev-tools',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-extensions',
+          '--disable-blink-features',
+          '--disable-plugins',
+          '--no-default-browser-check',
+          '--no-first-run',
+          '--disable-default-apps'
+        ],
+        ignoreHTTPSErrors: true,
+        ignoreDefaultArgs: ['--disable-extensions', '--enable-automation'],
+        slowMo: 100, // Reduced slowMo for faster initialization
+        timeout: 120000, // 2 minutes
+        protocolTimeout: 120000,
+        // Additional options for stability
+        defaultViewport: null,
+        devtools: false
+      },
+      webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+      },
+      takeoverOnConflict: false, // Disable takeover to prevent conflicts
+      takeoverTimeoutMs: 0, // Disable takeover timeout
+      authTimeoutMs: 120000, // 2 minutes  
+      qrMaxRetries: 5,
+      // Additional client options for stability
+      restartOnAuthFail: true,
+      markOnlineOnConnect: true,
+      qrTimeoutMs: 120000
+    };
+  }
+
   async createBot(name = null, assistantName = null, ownerId = null) {
     const botId = uuidv4();
     const botName = name || `Bot-${Date.now()}`;
@@ -731,72 +824,13 @@ export class BotManager {
     try {
       console.log(`Creating new WhatsApp client for bot ${botId} with session path: ./sessions`);
       
-      const client = new Client({
-        authStrategy: new LocalAuth({
-          clientId: botId,
-          dataPath: './sessions'
-        }),
-        puppeteer: {
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            // Argumentos extras para máxima estabilidade
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=TranslateUI',
-            '--disable-ipc-flooding-protection',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-extensions',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--metrics-recording-only',
-            '--mute-audio',
-            '--no-crash-upload',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-domain-reliability',
-            '--disable-client-side-phishing-detection',
-            '--disable-component-update',
-            '--disable-hang-monitor',
-            '--disable-prompt-on-repost',
-            '--force-fieldtrials=SiteIsolationExtensions/Control',
-            '--disable-back-forward-cache',
-            '--disable-popup-blocking',
-            '--disable-print-preview',
-            '--max_old_space_size=4096',
-            '--memory-pressure-off',
-            '--disable-low-end-device-mode',
-            '--disable-backing-store-limit',
-            // Argumentos críticos para sessões persistentes
-            '--disable-web-security',
-            '--disable-site-isolation-trials',
-            '--disable-features=VizDisplayCompositor',
-            '--user-data-dir=/tmp/whatsapp-session-data',
-            '--aggressive-cache-discard'
-          ],
-          ignoreHTTPSErrors: true,
-          ignoreDefaultArgs: ['--disable-extensions'],
-          slowMo: 100,
-          timeout: 120000,
-          protocolTimeout: 120000
-        },
-        webVersionCache: {
-          type: 'remote',
-          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
-        },
-        takeoverOnConflict: true,
-        takeoverTimeoutMs: 30000
-      });
+      // Clean any potential conflicting session before creating
+      await this.cleanBotSession(botId);
+      
+      // Use the enhanced client configuration
+      const client = new Client(this.getClientConfig(`./sessions/session-${botId}`));
 
-    const botData = {
+      const botData = {
       id: botId,
       name: botName,
       assistantName: defaultAssistantName, // Add assistant name field
@@ -871,7 +905,61 @@ export class BotManager {
         });
       }
       
-      await client.initialize();
+      // Initialize with timeout and retry logic
+      try {
+        console.log(`[BOT ${botId}] Starting WhatsApp client initialization...`);
+        
+        // Wait a bit before initialization to ensure puppeteer is ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Add a timeout wrapper with longer timeout for AppState issues
+        await Promise.race([
+          client.initialize(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Initialization timeout after 120 seconds')), 120000)
+          )
+        ]);
+        
+        console.log(`[BOT ${botId}] WhatsApp client initialized successfully`);
+      } catch (initError) {
+        console.error(`[BOT ${botId}] Initialization failed:`, initError.message);
+        
+        // Check if it's the AppState error and provide specific handling
+        if (initError.message.includes('AppState') || initError.message.includes('undefined')) {
+          console.log(`[BOT ${botId}] Detected AppState error - attempting cleanup and retry`);
+          
+          try {
+            // Clean up session if it exists
+            const sessionPath = `./sessions/session-${botId}`;
+            if (fs.existsSync(sessionPath)) {
+              console.log(`[BOT ${botId}] Removing corrupted session data`);
+              await fs.promises.rmdir(sessionPath, { recursive: true });
+            }
+            
+            // Clean up temp data
+            const tempPath = `/tmp/whatsapp-session-data`;
+            if (fs.existsSync(tempPath)) {
+              await fs.promises.rmdir(tempPath, { recursive: true });
+            }
+            
+          } catch (cleanupError) {
+            console.error(`[BOT ${botId}] Error during cleanup:`, cleanupError.message);
+          }
+        }
+        
+        // Try to destroy the client if it exists
+        try {
+          if (client) {
+            await client.destroy();
+            console.log(`[BOT ${botId}] Client destroyed after failed initialization`);
+          }
+        } catch (destroyError) {
+          console.error(`[BOT ${botId}] Error destroying client:`, destroyError.message);
+        }
+        
+        throw new Error(`Bot initialization failed: ${initError.message}. Try creating the bot again.`);
+      }
+      
       this.emitBotUpdate(botId);
       return botId;
     } catch (error) {
@@ -1124,7 +1212,30 @@ export class BotManager {
         console.error(`Error updating bot ${id} disconnection in database:`, error);
       }
 
-      // Iniciar reconexão automática se não for graceful shutdown
+      // Não reconectar automaticamente em caso de LOGOUT (sessão inválida/conflito)
+      if (reason === 'LOGOUT') {
+        console.log(`[LOGOUT] Bot ${id} foi deslogado - limpando sessão e aguardando nova conexão manual`);
+        botData.status = 'auth_failed';
+        botData.error = 'Sessão deslogada - necessário escanear QR code novamente';
+        this.emitBotUpdate(id);
+        
+        // Limpar sessão corrompida
+        this.cleanBotSession(id).catch(error => {
+          console.error(`Error cleaning session for bot ${id}:`, error);
+        });
+        
+        try {
+          DatabaseService.updateBot(id, {
+            status: 'auth_failed',
+            lastError: 'Sessão deslogada - necessário escanear QR code novamente'
+          });
+        } catch (error) {
+          console.error(`Error updating bot ${id} logout status in database:`, error);
+        }
+        return;
+      }
+
+      // Iniciar reconexão automática apenas para outras desconexões (não LOGOUT)
       if (!this.gracefulShutdown && reason !== 'Client destroyed') {
         console.log(`[RECONNECT] Iniciando reconexão automática para bot ${id} após desconexão: ${reason}`);
         setTimeout(() => this.handleReconnection(id, new Error(`Disconnected: ${reason}`)), 5000);

@@ -480,7 +480,7 @@ class DatabaseService {
       lawyerData.phone,
       lawyerData.legalField,
       lawyerData.email || null,
-      lawyerData.isActive !== undefined ? lawyerData.isActive : true,
+      lawyerData.isActive !== undefined ? (lawyerData.isActive ? 1 : 0) : 1,
       lawyerData.ownerId
     );
   }

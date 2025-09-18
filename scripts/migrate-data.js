@@ -124,13 +124,17 @@ class DataMigration {
         
         for (const lawyer of lawyersData) {
           try {
-            DatabaseService.createLawyer({
+            const lawyerObj = {
               id: lawyer.id || uuidv4(),
               name: lawyer.name,
               phone: lawyer.phone,
-              legalField: lawyer.legalField,
+              legalField: lawyer.specialty || lawyer.legalField,
+              email: lawyer.email,
+              isActive: lawyer.isActive,
               ownerId: lawyer.ownerId || this.getRandomLawOfficeId()
-            });
+            };
+            
+            DatabaseService.createLawyer(lawyerObj);
             console.log(`  ✓ Migrated lawyer: ${lawyer.name}`);
           } catch (error) {
             if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
