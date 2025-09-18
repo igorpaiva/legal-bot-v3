@@ -1,7 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import pkg from 'whatsapp-web.js';
-const { MessageMedia } = pkg;
 import { formatPhoneForWhatsApp } from '../routes/lawyers.js';
 import DatabaseService from './DatabaseService.js';
 
@@ -112,24 +110,33 @@ class LawyerNotificationService {
       console.log(`Sending PDF to lawyer ${lawyer.name} (${lawyer.legalField}) at ${lawyerPhone}`);
 
       // Find an active bot to send the message
-      const activeBots = Array.from(botManager.bots.values()).filter(bot => bot.isActive);
+      const activeBots = Array.from(botManager.bots.values()).filter(bot => 
+        bot.isActive && bot.status === 'connected' && bot.socket && bot.socket.user);
+      
       if (activeBots.length === 0) {
-        console.error('No active bots available to send lawyer notification');
+        console.error('No connected bots available to send lawyer notification');
+        console.log('Total bots:', botManager.bots.size);
+        console.log('Bot statuses:', Array.from(botManager.bots.values()).map(bot => ({
+          id: bot.id,
+          isActive: bot.isActive,
+          status: bot.status,
+          hasSocket: !!bot.socket,
+          hasUser: !!bot.socket?.user
+        })));
         return false;
       }
 
       const bot = activeBots[0]; // Use the first available bot
-      const client = bot.client;
+      const socket = bot.socket; // Baileys uses 'socket' not 'client'
 
-      if (!client || !client.info) {
-        console.error('Bot client not ready');
-        console.log('Client exists:', !!client);
-        console.log('Client info exists:', !!client?.info);
-        console.log('Client state:', client?.info?.wid || 'unknown');
-        return false;
-      }
-
-      console.log('WhatsApp client is ready, sending message...');
+      console.log('WhatsApp socket is ready, sending message...');
+      console.log('Bot details:', {
+        id: bot.id,
+        status: bot.status,
+        hasSocket: !!socket,
+        hasUser: !!socket.user,
+        userJid: socket.user?.id
+      });
 
       // Format lawyer phone for WhatsApp Chat ID
       const chatId = `${lawyerPhone.replace('+', '')}@c.us`;
@@ -159,7 +166,7 @@ _Enviado automaticamente pelo sistema ${officeName}_`;
 
       // Send the text message first
       console.log('Sending text message...');
-      await client.sendMessage(chatId, message);
+      await socket.sendMessage(chatId, { text: message });
       console.log('Text message sent successfully');
 
       // Send the PDF as a document
@@ -177,30 +184,26 @@ _Enviado automaticamente pelo sistema ${officeName}_`;
           buffer = Buffer.from(pdfBuffer);
         }
         
-        const base64Data = buffer.toString('base64');
-        console.log('Base64 data length:', base64Data.length);
-        console.log('Base64 starts with:', base64Data.substring(0, 50));
         
-        const media = new MessageMedia(
-          'application/pdf',
-          base64Data,
-          filename
-        );
-
         console.log('Sending PDF document...');
         
         try {
-          // First attempt: Send as MessageMedia
-          await client.sendMessage(chatId, media, {
+          // Send PDF using Baileys format
+          await socket.sendMessage(chatId, {
+            document: buffer,
+            mimetype: 'application/pdf',
+            fileName: filename,
             caption: `📄 Relatório completo do caso de ${clientName}`
           });
-          console.log('PDF document sent successfully via MessageMedia');
+          console.log('PDF document sent successfully via Baileys');
         } catch (mediaError) {
-          console.warn('MessageMedia failed, trying alternative method:', mediaError.message);
+          console.warn('PDF sending failed, trying fallback message:', mediaError.message);
           
-          // Second attempt: Send as regular message with base64 data
+          // Fallback: Send notification message only
           try {
-            await client.sendMessage(chatId, `📄 *Relatório PDF do caso de ${clientName}*\n\n_O arquivo PDF está sendo processado. Se não receber o arquivo, entre em contato._`);
+            await socket.sendMessage(chatId, { 
+              text: `📄 *Relatório PDF do caso de ${clientName}*\n\n_O arquivo PDF está sendo processado. Se não receber o arquivo, entre em contato._`
+            });
             console.log('Sent PDF notification message as fallback');
           } catch (fallbackError) {
             console.error('Both PDF sending methods failed:', fallbackError);

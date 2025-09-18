@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import LegalFieldQuestionsService from './LegalFieldQuestionsService.js';
 import LawyerNotificationService from './LawyerNotificationService.js';
+import DatabaseService from './DatabaseService.js';
 
 export class ConversationFlowService {
   constructor(groqService, triageService, assistantName = 'Ana', botManager = null) {
@@ -1566,58 +1567,62 @@ Responda APENAS com sua mensagem:`;
   }
 
   saveTriageAnalysis(conversation, triageData) {
+    console.log(`[DEBUG] saveTriageAnalysis - Called for conversation ${conversation.id}`);
+    console.log(`[DEBUG] saveTriageAnalysis - Triage data exists: ${!!triageData}`);
+    if (triageData) {
+      console.log(`[DEBUG] saveTriageAnalysis - Case category: ${triageData.case?.category}, urgency: ${triageData.case?.urgency}`);
+    }
+    
     // Persist conversation if not exists in DB
-    if (this.botManager && this.botManager.database) {
-      try {
-        // Verifica se a conversa existe no banco
-        const dbConv = this.botManager.database.getBotConversations(conversation.botId || this.botManager.id)
-          .find(c => c.id === conversation.id.toString());
-        if (!dbConv) {
-          // Cria a conversa no banco
-          // Corrige para garantir que o botId seja sempre o ID real do bot
-          let botId = conversation.botId;
-          if (!botId || typeof botId !== 'string' || botId.trim() === '') {
-            // Tenta obter o botId do botManager
-            if (this.botManager && this.botManager.bots && this.botManager.bots.size === 1) {
-              botId = Array.from(this.botManager.bots.keys())[0];
-            } else if (this.botManager && this.botManager.id && typeof this.botManager.id === 'string') {
-              botId = this.botManager.id;
-            } else {
-              botId = 'default-bot';
-            }
+    try {
+      // Verifica se a conversa existe no banco
+      const dbConv = DatabaseService.getBotConversations(conversation.botId || this.botManager?.id)
+        .find(c => c.id === conversation.id.toString());
+      if (!dbConv) {
+        // Cria a conversa no banco
+        // Corrige para garantir que o botId seja sempre o ID real do bot
+        let botId = conversation.botId;
+        if (!botId || typeof botId !== 'string' || botId.trim() === '') {
+          // Tenta obter o botId do botManager
+          if (this.botManager && this.botManager.bots && this.botManager.bots.size === 1) {
+            botId = Array.from(this.botManager.bots.keys())[0];
+          } else if (this.botManager && this.botManager.id && typeof this.botManager.id === 'string') {
+            botId = this.botManager.id;
+          } else {
+            botId = 'default-bot';
           }
-          const allowedStatus = ['active', 'completed', 'abandoned'];
-          let status = conversation.state;
-          if (!allowedStatus.includes(status)) {
-            status = 'active';
-          }
-          // Verifica se a conversa já existe antes de criar
-          const existing = this.botManager.database.getConversationById
-            ? this.botManager.database.getConversationById(conversation.id.toString())
-            : null;
-          if (!existing) {
-            console.log(`[DEBUG] Salvando conversa no banco: id=${conversation.id}, botId=${botId}, status=${status}`);
-            this.botManager.database.createConversation({
-              id: conversation.id.toString(),
-              botId,
-              ownerId: (this.botManager && this.botManager.bots && this.botManager.bots.get(botId)) ? this.botManager.bots.get(botId).ownerId : null,
-              clientPhone: conversation.client?.phone || '',
-              clientName: conversation.client?.name || '',
-              clientEmail: conversation.client?.email || null,
-              status,
-              legalField: triageData?.case?.category || null,
-              urgency: triageData?.case?.urgency || null,
-              startTime: (conversation.startedAt instanceof Date)
-                ? conversation.startedAt.toISOString()
-                : (typeof conversation.startedAt === 'string' ? conversation.startedAt : new Date().toISOString()),
-              summary: triageData?.case?.description || null
-            });
-          }
-          console.log(`[CONVERSATION] Conversa criada no banco: id=${conversation.id}`);
         }
-      } catch (err) {
-        console.error(`[CONVERSATION] Erro ao criar conversa no banco: id=${conversation.id}`, err);
+        const allowedStatus = ['active', 'completed', 'abandoned'];
+        let status = conversation.state;
+        if (!allowedStatus.includes(status)) {
+          status = 'active';
+        }
+        // Verifica se a conversa já existe antes de criar
+        const existing = DatabaseService.getConversationById
+          ? DatabaseService.getConversationById(conversation.id.toString())
+          : null;
+        if (!existing) {
+          console.log(`[DEBUG] Salvando conversa no banco: id=${conversation.id}, botId=${botId}, status=${status}`);
+          DatabaseService.createConversation({
+            id: conversation.id.toString(),
+            botId,
+            ownerId: (this.botManager && this.botManager.bots && this.botManager.bots.get(botId)) ? this.botManager.bots.get(botId).ownerId : null,
+            clientPhone: conversation.client?.phone || '',
+            clientName: conversation.client?.name || '',
+            clientEmail: conversation.client?.email || null,
+            status,
+            legalField: triageData?.case?.category || null,
+            urgency: triageData?.case?.urgency || null,
+            startTime: (conversation.startedAt instanceof Date)
+              ? conversation.startedAt.toISOString()
+              : (typeof conversation.startedAt === 'string' ? conversation.startedAt : new Date().toISOString()),
+            summary: triageData?.case?.description || null
+          });
+        }
+        console.log(`[CONVERSATION] Conversa criada no banco: id=${conversation.id}`);
       }
+    } catch (err) {
+      console.error(`[CONVERSATION] Erro ao criar conversa no banco: id=${conversation.id}`, err);
     }
     if (!this.messages.has(conversation.id)) {
       this.messages.set(conversation.id, []);
@@ -1635,28 +1640,26 @@ Responda APENAS com sua mensagem:`;
     this.messages.get(conversation.id).push(message);
 
       // Persist triage JSON in database (evita duplicidade)
-      if (this.botManager && this.botManager.database) {
-        try {
-          const triageId = `${conversation.id}-triage-${this.messageIdCounter}`;
-          // Verifica se já existe triagem para esta conversa
-          const existingTriage = this.botManager.database.getTriageByConversationId(conversation.id.toString());
-          if (!existingTriage) {
-            const result = this.botManager.database.createTriage({
-              id: triageId,
-              conversationId: conversation.id.toString(),
-              triageJson: JSON.stringify(triageData)
-            });
-            if (result && result.changes > 0) {
-              console.log(`[TRIAGE] Triagem persistida com sucesso: triageId=${triageId}, conversationId=${conversation.id}`);
-            } else {
-              console.warn(`[TRIAGE] Falha ao persistir triagem: triageId=${triageId}, conversationId=${conversation.id}`);
-            }
+      try {
+        const triageId = `${conversation.id}-triage-${this.messageIdCounter}`;
+        // Verifica se já existe triagem para esta conversa
+        const existingTriage = DatabaseService.getTriageByConversationId(conversation.id.toString());
+        if (!existingTriage) {
+          const result = DatabaseService.createTriage({
+            id: triageId,
+            conversationId: conversation.id.toString(),
+            triageJson: JSON.stringify(triageData)
+          });
+          if (result && result.changes > 0) {
+            console.log(`[TRIAGE] Triagem persistida com sucesso: triageId=${triageId}, conversationId=${conversation.id}`);
           } else {
-            console.log(`[TRIAGE] Triagem já existe para a conversa: conversationId=${conversation.id}`);
+            console.warn(`[TRIAGE] Falha ao persistir triagem: triageId=${triageId}, conversationId=${conversation.id}`);
           }
-        } catch (err) {
-          console.error(`[TRIAGE] Erro ao persistir triagem no banco: triageId=${conversation.id}-triage-${this.messageIdCounter}, conversationId=${conversation.id}`, err);
+        } else {
+          console.log(`[TRIAGE] Triagem já existe para a conversa: conversationId=${conversation.id}`);
         }
+      } catch (err) {
+        console.error(`[TRIAGE] Erro ao persistir triagem no banco: triageId=${conversation.id}-triage-${this.messageIdCounter}, conversationId=${conversation.id}`, err);
       }
   }
 
@@ -1680,11 +1683,6 @@ Responda APENAS com sua mensagem:`;
 
   // Database update methods
   async updateConversationInDatabase(conversation) {
-    if (!this.botManager || !this.botManager.database) {
-      console.warn('[WARNING] updateConversationInDatabase - Database not available');
-      return;
-    }
-
     try {
       // Map conversation state to database status
       let dbStatus = 'active';
@@ -1696,30 +1694,24 @@ Responda APENAS com sua mensagem:`;
 
       const endTime = conversation.state === 'COMPLETED' ? new Date().toISOString() : null;
 
-      // Usa método do DatabaseService para atualizar conversa
-      if (typeof this.botManager.database.updateConversation === 'function') {
-        this.botManager.database.updateConversation(conversation.id.toString(), {
-          status: dbStatus,
-          endTime,
-          summary: conversation.analysis?.case?.description || null,
-          legalField: conversation.analysis?.case?.category || null,
-          urgency: conversation.analysis?.case?.urgency || null
-        });
-      } else if (typeof this.botManager.database.constructor.updateConversation === 'function') {
-        // fallback para método estático
-        this.botManager.database.constructor.updateConversation(conversation.id.toString(), {
-          status: dbStatus,
-          endTime,
-          summary: conversation.analysis?.case?.description || null,
-          legalField: conversation.analysis?.case?.category || null,
-          urgency: conversation.analysis?.case?.urgency || null
-        });
-      } else {
-        console.error('[ERROR] updateConversationInDatabase: método updateConversation não encontrado');
+      console.log(`[DEBUG] updateConversationInDatabase - Conversation ID: ${conversation.id}, Current state: ${conversation.state}, DB Status: ${dbStatus}`);
+      console.log(`[DEBUG] updateConversationInDatabase - Analysis exists: ${!!conversation.analysis}`);
+      if (conversation.analysis) {
+        console.log(`[DEBUG] updateConversationInDatabase - Legal field: ${conversation.analysis.case?.category}, Urgency: ${conversation.analysis.case?.urgency}`);
       }
-      console.log(`[DEBUG] Updated conversation ${conversation.id} in database: status=${dbStatus}`);
+
+      // Use DatabaseService singleton to update conversation
+      const updateResult = DatabaseService.updateConversation(conversation.id.toString(), {
+        status: dbStatus,
+        endTime,
+        summary: conversation.analysis?.case?.description || null,
+        legalField: conversation.analysis?.case?.category || null,
+        urgency: conversation.analysis?.case?.urgency || null
+      });
+
+      console.log(`[INFO] updateConversationInDatabase - Updated conversation ${conversation.id} with status: ${dbStatus}, Result:`, updateResult);
     } catch (error) {
-      console.error('Error updating conversation in database:', error);
+      console.error('[ERROR] updateConversationInDatabase:', error.message);
     }
   }
 

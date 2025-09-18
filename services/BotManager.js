@@ -17,20 +17,13 @@ export class BotManager {
   constructor(io) {
     this.io = io;
     this.bots = new Map();
-    this.database = DatabaseService;
-    
-    // Create sessions directory if it doesn't exist
-    if (!fs.existsSync('./sessions')) {
-      fs.mkdirSync('./sessions', { recursive: true });
-    }
+    this.initializationLocks = new Map(); // Add locks to prevent concurrent initialization
     
     // Load persisted bots on startup
     this.loadPersistedData();
     
-    // Start periodic cleanup of disconnected bots
-    this.cleanupInterval = setInterval(() => {
-      this.cleanupDisconnectedBots();
-    }, 60000); // Run every minute
+    // Note: Removed automatic cleanup - bots should persist until manually deleted
+    // Only clean up on specific error conditions or manual removal
   }
 
   async loadPersistedData() {
@@ -40,11 +33,13 @@ export class BotManager {
       const botConfigs = DatabaseService.getAllBotsExtended();
       
       for (const config of botConfigs) {
-        if (config.isActive && (config.status === 'connected' || config.status === 'ready')) {
+        // Restore bots that have connected before (have authentication data)
+        // or are currently active, regardless of temporary disconnection status
+        if (config.hasConnectedBefore || (config.isActive && config.status !== 'error')) {
           console.log(`🔄 Restoring bot: ${config.name} (${config.id})`);
           await this.restoreBot(config);
         } else {
-          console.log(`⏭️  Skipping inactive bot: ${config.name} (${config.id}) - Status: ${config.status}`);
+          console.log(`⏭️  Skipping bot: ${config.name} (${config.id}) - Never connected before`);
         }
       }
       
@@ -64,7 +59,7 @@ export class BotManager {
 
     try {
       // Create bot in database first
-      await this.database.createBotExtended({
+      await DatabaseService.createBotExtended({
         id: botId,
         name: botName,
         assistantName: defaultAssistantName,
@@ -90,7 +85,7 @@ export class BotManager {
       
     } catch (error) {
       console.error(`❌ Error creating bot ${botId}:`, error);
-      await this.database.updateBotExtended(botId, {
+      await DatabaseService.updateBotExtended(botId, {
         status: 'error',
         lastError: error.message
       });
@@ -100,18 +95,52 @@ export class BotManager {
 
   async initializeBaileysBot(botId, botName, assistantName) {
     try {
+      console.log(`🚀 [INIT] Starting initialization for bot ${botId} (${botName})`);
+      
+      // Check if this bot is already being initialized
+      if (this.initializationLocks.has(botId)) {
+        console.log(`🔒 [INIT] Bot ${botId} is already being initialized, skipping duplicate call`);
+        return;
+      }
+      
+      // Set lock
+      this.initializationLocks.set(botId, true);
+      
+      // Get bot data from database to include ownerId
+      const botConfig = DatabaseService.getBotExtendedById(botId);
+      
       // Check if bot already exists and is connected
       const existingBot = this.bots.get(botId);
       
+      console.log(`🔍 [INIT] Bot ${botId} current state:`, {
+        exists: !!existingBot,
+        status: existingBot?.status,
+        isInitializing: existingBot?.isInitializing,
+        isReconnecting: existingBot?.isReconnecting,
+        hasSocket: !!existingBot?.socket
+      });
+      
       // Prevent multiple simultaneous initializations of the same bot
-      if (existingBot && existingBot.isInitializing) {
-        console.log(`⚠️  Bot ${botId} is already being initialized, skipping`);
+      if (existingBot && (existingBot.isInitializing || existingBot.isReconnecting)) {
+        console.log(`⚠️  Bot ${botId} is already being initialized or reconnecting, skipping`);
         return;
       }
       
       if (existingBot && existingBot.status === 'connected' && existingBot.socket) {
         console.log(`⚠️  Bot ${botId} already connected, skipping initialization`);
         return;
+      }
+      
+      // If there's an existing bot with a socket, close it first to avoid conflicts
+      if (existingBot && existingBot.socket) {
+        console.log(`🔄 Closing existing socket for bot ${botId} before reinitializing`);
+        try {
+          existingBot.socket.end();
+        } catch (error) {
+          console.error(`⚠️  Error closing existing socket:`, error);
+        }
+        // Wait a bit for the socket to close properly
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       const sessionPath = `./sessions/session-${botId}`;
@@ -156,7 +185,7 @@ export class BotManager {
         
         // Ensure services are initialized (in case they were lost during reconnection)
         if (!botData.conversationFlowService) {
-          botData.conversationFlowService = new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName);
+          botData.conversationFlowService = new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName, this);
         }
         if (!botData.groqService) {
           botData.groqService = new GroqService();
@@ -169,9 +198,6 @@ export class BotManager {
         }
         if (!botData.pdfProcessingService) {
           botData.pdfProcessingService = new PdfProcessingService();
-        }
-        if (!botData.chatCooldowns) {
-          botData.chatCooldowns = new Map();
         }
       } else {
         // Create new bot data
@@ -193,14 +219,13 @@ export class BotManager {
           isRestoring: false,
           isReconnecting: false,
           isInitializing: true,
+          ownerId: botConfig ? botConfig.ownerId : null, // Add ownerId from database
           // Initialize services
-          conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName),
+          conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName, this),
           groqService: new GroqService(),
           humanLikeDelay: new HumanLikeDelay(),
           audioTranscriptionService: new AudioTranscriptionService(),
-          pdfProcessingService: new PdfProcessingService(),
-          chatCooldowns: new Map(),
-          isProcessing: false
+          pdfProcessingService: new PdfProcessingService()
         };
 
         this.bots.set(botId, botData);
@@ -235,8 +260,15 @@ export class BotManager {
       
       this.emitBotUpdate(botId);
       
+      // Clear initialization lock on success
+      this.initializationLocks.delete(botId);
+      console.log(`🔓 [INIT] Released lock for bot ${botId}`);
+      
     } catch (error) {
-      console.error(`❌ Error initializing Baileys bot ${botId}:`, error);
+      // Clear initialization lock on error
+      this.initializationLocks.delete(botId);
+      console.error(`❌ [INIT] Error initializing bot ${botId}:`, error);
+      console.log(`🔓 [INIT] Released lock for bot ${botId} due to error`);
       throw error;
     }
   }
@@ -267,7 +299,7 @@ export class BotManager {
           botData.qrCode = qrCodeDataURL;
           botData.status = 'waiting_for_scan';
           
-          await this.database.updateBotExtended(id, {
+          await DatabaseService.updateBotExtended(id, {
             status: 'waiting_for_scan',
             lastQrGenerated: new Date().toISOString()
           });
@@ -293,15 +325,14 @@ export class BotManager {
         
         // If session was replaced by another connection, stop reconnecting
         if (isReplaced) {
-          console.log(`🔄 Bot ${id} session was replaced by another connection. Stopping reconnections.`);
+          console.log(`🔄 Bot ${id} session was replaced by another connection. Setting to disconnected state.`);
           botData.status = 'disconnected';
-          botData.isActive = false;
           botData.isReconnecting = false;
           botData.reconnectionAttempts = 0;
           
-          await this.database.updateBotExtended(id, {
-            status: 'disconnected',
-            isActive: false
+          await DatabaseService.updateBotExtended(id, {
+            status: 'disconnected'
+            // Keep isActive: true to allow manual reconnection
           });
           
           this.emitBotUpdate(id);
@@ -322,10 +353,14 @@ export class BotManager {
           const delay = Math.min(5000 * Math.pow(1.5, botData.reconnectionAttempts - 1), 60000);
           
           // Reconnect after delay
-          setTimeout(() => {
+          setTimeout(async () => {
             if (botData.isReconnecting && botData.reconnectionAttempts <= 10) {
               console.log(`🔄 Reconnecting bot ${id}... (attempt ${botData.reconnectionAttempts})`);
-              this.initializeBaileysBot(id, botData.name, botData.assistantName);
+              try {
+                await this.initializeBaileysBot(id, botData.name, botData.assistantName);
+              } catch (error) {
+                console.error(`❌ Error during reconnection attempt for bot ${id}:`, error);
+              }
             }
           }, delay);
         } else if (!shouldReconnect || botData.reconnectionAttempts >= 10) {
@@ -334,19 +369,27 @@ export class BotManager {
           }
           
           botData.status = 'disconnected';
-          botData.isActive = false;
+          // Keep isActive = true to allow restoration on restart
+          // Only set isActive = false when manually deactivated by user
           botData.isReconnecting = false;
           botData.reconnectionAttempts = 0;
           
-          await this.database.updateBotExtended(id, {
-            status: 'disconnected',
-            isActive: false
+          await DatabaseService.updateBotExtended(id, {
+            status: 'disconnected'
+            // Don't set isActive: false here - let it remain true for restoration
           });
           
           this.emitBotUpdate(id);
         }
       } else if (connection === 'open') {
         console.log(`✅ Bot ${id} connected successfully!`);
+        
+        // Cancel any pending reconnection timer
+        if (botData.reconnectionTimer) {
+          clearTimeout(botData.reconnectionTimer);
+          botData.reconnectionTimer = null;
+          console.log(`🔄 Cancelled pending reconnection timer for bot ${id}`);
+        }
         
         // Stop any pending reconnection and reset counters/flags
         botData.isReconnecting = false;
@@ -368,7 +411,7 @@ export class BotManager {
           console.error(`⚠️  Error getting phone number for bot ${id}:`, error);
         }
         
-        await this.database.updateBotExtended(id, {
+        await DatabaseService.updateBotExtended(id, {
           status: 'connected',
           isActive: true,
           phoneNumber: botData.phoneNumber,
@@ -393,18 +436,6 @@ export class BotManager {
           const contactNumber = remoteJid.split('@')[0];
           
           console.log(`📨 Bot ${id} received message from: ${contactNumber}`);
-          
-          // Prevent processing if already processing a message from this chat
-          const cooldownKey = `${id}-${remoteJid}`;
-          if (botData.isProcessing || botData.chatCooldowns.has(cooldownKey)) {
-            const lastProcessed = botData.chatCooldowns.get(cooldownKey) || 0;
-            if (Date.now() - lastProcessed < 3000) { // 3 second cooldown
-              console.log(`⏱️  Bot ${id} skipping message due to cooldown`);
-              return;
-            }
-          }
-          
-          botData.isProcessing = true;
           
           try {
             const messageText = message.message?.conversation || 
@@ -444,9 +475,6 @@ export class BotManager {
               // Send response with human-like delay
               await this.sendMessage(botData, remoteJid, response);
               
-              // Update cooldown
-              botData.chatCooldowns.set(cooldownKey, Date.now());
-              
               console.log(`📤 Bot ${id} sent response to ${contactName}: ${response.substring(0, 100)}...`);
             }
           } catch (error) {
@@ -455,12 +483,9 @@ export class BotManager {
             // Send fallback message
             try {
               await this.sendMessage(botData, remoteJid, 'Desculpe, estou com dificuldades técnicas. Tente novamente mais tarde.');
-              botData.chatCooldowns.set(cooldownKey, Date.now());
             } catch (fallbackError) {
               console.error(`❌ Error sending fallback message for bot ${id}:`, fallbackError);
             }
-          } finally {
-            botData.isProcessing = false;
           }
         }
       } catch (error) {
@@ -518,14 +543,13 @@ export class BotManager {
         sessionPath: config.sessionPath,
         qrCode: null,
         isRestoring: true,
+        ownerId: config.ownerId, // Add missing ownerId field
         // Initialize services
-        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana'),
+        conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this),
         groqService: new GroqService(),
         humanLikeDelay: new HumanLikeDelay(),
         audioTranscriptionService: new AudioTranscriptionService(),
-        pdfProcessingService: new PdfProcessingService(),
-        chatCooldowns: new Map(),
-        isProcessing: false
+        pdfProcessingService: new PdfProcessingService()
       };
 
       this.bots.set(config.id, botData);
@@ -536,7 +560,7 @@ export class BotManager {
     } catch (error) {
       console.error(`❌ Error restoring bot ${config.id}:`, error);
       
-      await this.database.updateBotExtended(config.id, {
+      await DatabaseService.updateBotExtended(config.id, {
         status: 'error',
         lastError: error.message
       });
@@ -547,11 +571,17 @@ export class BotManager {
     const bot = this.bots.get(botId);
     if (bot && bot.socket) {
       try {
+        // Cancel any pending reconnection timer
+        if (bot.reconnectionTimer) {
+          clearTimeout(bot.reconnectionTimer);
+          bot.reconnectionTimer = null;
+        }
+        
         bot.socket.end();
         bot.isActive = false;
         bot.status = 'stopped';
         
-        await this.database.updateBotExtended(botId, {
+        await DatabaseService.updateBotExtended(botId, {
           status: 'stopped',
           isActive: false
         });
@@ -583,7 +613,7 @@ export class BotManager {
       this.bots.delete(botId);
       
       // Delete from database
-      await this.database.deleteBotExtended(botId);
+      await DatabaseService.deleteBotExtended(botId);
     }
     return success;
   }
@@ -605,7 +635,8 @@ export class BotManager {
       lastActivity: bot.lastActivity,
       createdAt: bot.createdAt,
       qrCode: bot.qrCode,
-      error: bot.error
+      error: bot.error,
+      ownerId: bot.ownerId  // Added missing ownerId field
     }));
   }
 
@@ -660,10 +691,7 @@ export class BotManager {
   async destroy() {
     console.log('🧹 Cleaning up bot manager...');
     
-    // Clear cleanup interval
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
+    // Note: No cleanup interval to clear since we removed automatic cleanup
     
     for (const [botId, bot] of this.bots) {
       if (bot.socket) {
@@ -678,17 +706,18 @@ export class BotManager {
     this.bots.clear();
   }
 
-  // Clean up disconnected bots periodically
+  // Clean up bots only in specific error conditions (not on normal disconnection)
   cleanupDisconnectedBots() {
     const now = Date.now();
-    const CLEANUP_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    const CLEANUP_THRESHOLD = 24 * 60 * 60 * 1000; // 24 hours - much longer threshold
     
     for (const [botId, bot] of this.bots) {
-      if (bot.status === 'disconnected' && 
+      // Only cleanup bots that are in error state for a very long time
+      if (bot.status === 'error' && 
           bot.lastActivity && 
           (now - new Date(bot.lastActivity).getTime()) > CLEANUP_THRESHOLD) {
         
-        console.log(`🧹 Cleaning up disconnected bot ${botId}`);
+        console.log(`🧹 Cleaning up bot in error state for 24+ hours: ${botId}`);
         
         // Close socket if still exists
         if (bot.socket) {
@@ -699,7 +728,7 @@ export class BotManager {
           }
         }
         
-        // Remove from memory
+        // Remove from memory but keep in database
         this.bots.delete(botId);
       }
     }

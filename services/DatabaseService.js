@@ -21,7 +21,7 @@ class DatabaseService {
    * @param {object} updates - Campos para atualizar
    */
   updateConversation(conversationId, updates) {
-    const allowedFields = ['status', 'legalField', 'urgency', 'summary', 'clientName', 'clientPhone', 'startTime'];
+    const allowedFields = ['status', 'legalField', 'urgency', 'summary', 'clientName', 'clientPhone', 'startTime', 'endTime'];
     const setClauses = [];
     const values = [];
     for (const field of allowedFields) {

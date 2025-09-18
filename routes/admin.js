@@ -1,5 +1,6 @@
 import express from 'express';
 import { GroqService } from '../services/GroqService.js';
+import DatabaseService from '../services/DatabaseService.js';
 import { authenticateUser, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -215,8 +216,7 @@ router.delete('/bulk/delete', authenticateUser, async (req, res) => {
 // Get active conversations and triages
 router.get('/triages', authenticateUser, (req, res) => {
   try {
-    // Buscar triagens persistidas no banco
-    const DatabaseService = req.botManager.database;
+    console.log('[DEBUG] DatabaseService import check:', typeof DatabaseService, DatabaseService ? 'exists' : 'undefined');
     
     // Para usuários law_office, filtrar apenas dados do seu escritório
     let triages;

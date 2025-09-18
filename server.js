@@ -57,6 +57,54 @@ async function initializeApplication() {
     app.locals.userService = userService;
     app.locals.botManager = botManager;
     
+    // Register routes after database initialization
+    app.use('/api/pdf', pdfRoutes);
+    app.use('/api/auth', authRoutes);
+    app.use('/api/bot', authenticateUser, botRoutes);
+    app.use('/api/admin', authenticateUser, adminRoutes);
+    app.use('/api/lawyers', authenticateUser, requireLawOffice, lawyersRoutes);
+    app.use('/api/monitoring', authenticateUser, monitoringRoutes);
+    app.use('/api/google-drive', authenticateUser, requireLawOffice, googleDriveRoutes);
+    
+    // Debug endpoints
+    app.get('/api/debug/bots', (req, res) => {
+      try {
+        const allBots = botManager.getAllBots();
+        console.log('Debug endpoint - All bots:', allBots);
+        res.json({
+          totalBots: allBots.length,
+          bots: allBots,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('Debug endpoint error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    app.get('/api/debug/user', authenticateUser, (req, res) => {
+      try {
+        console.log('Debug endpoint - User:', req.user);
+        res.json({
+          user: req.user,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('Debug endpoint error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Catch-all handler for React app (must be last)
+    app.get('*', (req, res) => {
+      const buildPath = path.join(__dirname, 'client/build');
+      if (fs.existsSync(path.join(buildPath, 'index.html'))) {
+        res.sendFile(path.join(buildPath, 'index.html'));
+      } else {
+        res.status(404).json({ error: 'Frontend not built' });
+      }
+    });
+    
     console.log('✅ Application initialization completed');
   } catch (error) {
     console.error('❌ Application initialization failed:', error);
@@ -70,6 +118,14 @@ const userService = new UserService();
 
 // Initialize default admin user (removed as it's now handled in initializeApplication)
 
+// Make botManager and userService available to routes first
+app.use((req, res, next) => {
+  req.botManager = botManager;
+  req.userService = userService;
+  req.io = io;
+  next();
+});
+
 // Security middleware
 app.use(helmet());
 app.use(cors({
@@ -80,59 +136,21 @@ app.use(cors({
 // Rate limiting
 app.use(rateLimiter);
 
-// Make botManager and userService available to routes first
-app.use((req, res, next) => {
-  req.botManager = botManager;
-  req.userService = userService;
-  req.io = io;
-  next();
-});
-
-// PDF routes without JSON middleware (for binary data)
-app.use('/api/pdf', pdfRoutes);
-
-// Body parsing middleware for other routes
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Other routes (with authentication middleware)
-app.use('/api/auth', authRoutes);
-app.use('/api/bot', authenticateUser, botRoutes);
-app.use('/api/admin', authenticateUser, adminRoutes);
-app.use('/api/lawyers', authenticateUser, requireLawOffice, lawyersRoutes);
-app.use('/api/monitoring', authenticateUser, monitoringRoutes);
-app.use('/api/google-drive', authenticateUser, requireLawOffice, googleDriveRoutes);
-
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  // Check if frontend build exists
-  const frontendPath = path.join(__dirname, 'client/dist/index.html');
-  
-  if (fs.existsSync(frontendPath)) {
-    app.use(express.static(path.join(__dirname, 'client/dist')));
-    
-    app.get('*', (req, res) => {
-      res.sendFile(frontendPath);
-    });
+// Static files - check if build exists
+try {
+  if (fs.existsSync(path.join(__dirname, 'client/build'))) {
+    console.log('📁 Frontend build found. Serving static files...');
+    app.use(express.static(path.join(__dirname, 'client/build')));
   } else {
     console.log('⚠️  Frontend build not found. API-only mode enabled.');
-    
-    // Serve a simple message for non-API routes
-    app.get('*', (req, res) => {
-      if (req.path.startsWith('/api/')) {
-        res.status(404).json({ error: 'API endpoint not found' });
-      } else {
-        res.json({ 
-          message: 'Legal Bot API Server', 
-          status: 'running',
-          mode: 'api-only',
-          note: 'Frontend build not available. Use API endpoints.',
-          health: '/api/monitoring/health',
-          admin: 'admin@legal-bot.com / admin123'
-        });
-      }
-    });
   }
+} catch (err) {
+  console.log('⚠️  Error checking frontend build:', err.message);
+  console.log('⚠️  Frontend build not found. API-only mode enabled.');
 }
 
 // Health check endpoint
@@ -142,6 +160,24 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     bots: botManager.getBotsStatus()
   });
+});
+
+// Debug endpoint to check bot status (no auth required for debugging)
+app.get('/api/debug/bots', (req, res) => {
+  try {
+    const botsStatus = botManager.getBotsStatus();
+    const allBots = botManager.getAllBots();
+    
+    res.json({
+      mapSize: botManager.bots.size,
+      mapKeys: Array.from(botManager.bots.keys()),
+      botsStatus,
+      allBots,
+      databaseCount: DatabaseService.getAllBotsExtended().length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Error handling middleware
