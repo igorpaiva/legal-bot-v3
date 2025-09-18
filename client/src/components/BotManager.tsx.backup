@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -15,7 +15,8 @@ import {
   IconButton,
   Avatar,
   Tooltip,
-  Alert
+  Alert,
+  LinearProgress
 } from '@mui/material';
 import {
   Add,
@@ -30,7 +31,8 @@ import {
   Schedule,
   SmartToy,
   PhoneAndroid,
-  Message
+  Message,
+  TrendingUp
 } from '@mui/icons-material';
 import { Bot, SystemStatus } from '../types';
 import api from '../services/api';
@@ -92,28 +94,28 @@ const QRCodeDialog: React.FC<QRCodeDialogProps> = ({ open, onClose, bot }) => {
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
-        QR Code para {bot?.name}
+        QR Code for {bot?.name}
       </DialogTitle>
       <DialogContent>
         {bot?.qrCode ? (
           <Box sx={{ textAlign: 'center', p: 2 }}>
             <img 
               src={bot.qrCode} 
-              alt="QR Code do WhatsApp" 
+              alt="WhatsApp QR Code" 
               style={{ maxWidth: '100%', height: 'auto' }}
             />
             <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
-              Escaneie este QR code com seu aplicativo WhatsApp mobile
+              Scan this QR code with your WhatsApp mobile app
             </Typography>
           </Box>
         ) : (
           <Box sx={{ textAlign: 'center', p: 4 }}>
-            <Typography>QR Code não disponível</Typography>
+            <Typography>QR Code not available</Typography>
           </Box>
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Fechar</Button>
+        <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
   );
@@ -160,7 +162,7 @@ const BotCard: React.FC<{
             <Typography variant="h6">{bot.name}</Typography>
             {bot.assistantName && (
               <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
-                Assistente: {bot.assistantName}
+                Assistant: {bot.assistantName}
               </Typography>
             )}
             <Chip 
@@ -178,17 +180,17 @@ const BotCard: React.FC<{
         )}
 
         <Typography variant="body2" color="textSecondary">
-          💬 {bot.messageCount} mensagens
+          💬 {bot.messageCount} messages
         </Typography>
 
         {bot.lastActivity && (
           <Typography variant="body2" color="textSecondary">
-            🕒 Última atividade: {formatDate(bot.lastActivity)}
+            🕒 Last active: {formatDate(bot.lastActivity)}
           </Typography>
         )}
 
         <Typography variant="body2" color="textSecondary">
-          📅 Criado em: {formatDate(bot.createdAt)}
+          📅 Created: {formatDate(bot.createdAt)}
         </Typography>
 
         {bot.error && (
@@ -200,7 +202,7 @@ const BotCard: React.FC<{
 
       <CardActions>
         {bot.status === 'waiting_for_scan' && bot.qrCode && (
-          <Tooltip title="Mostrar QR Code">
+          <Tooltip title="Show QR Code">
             <IconButton onClick={() => onShowQR(bot)} color="primary">
               <QrCode />
             </IconButton>
@@ -208,26 +210,26 @@ const BotCard: React.FC<{
         )}
         
         {bot.isActive ? (
-          <Tooltip title="Parar Bot">
+          <Tooltip title="Stop Bot">
             <IconButton onClick={() => onAction('stop', bot.id)} color="error">
               <Stop />
             </IconButton>
           </Tooltip>
         ) : (
-          <Tooltip title="Iniciar Bot">
+          <Tooltip title="Start Bot">
             <IconButton onClick={() => onAction('restart', bot.id)} color="success">
               <PlayArrow />
             </IconButton>
           </Tooltip>
         )}
 
-        <Tooltip title="Reiniciar Bot">
+        <Tooltip title="Restart Bot">
           <IconButton onClick={() => onAction('restart', bot.id)} color="warning">
             <RestartAlt />
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Excluir Bot">
+        <Tooltip title="Delete Bot">
           <IconButton onClick={() => onAction('delete', bot.id)} color="error">
             <Delete />
           </IconButton>
@@ -244,11 +246,37 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
   const [newBotName, setNewBotName] = useState('');
   const [newAssistantName, setNewAssistantName] = useState('Ana'); // Default to Ana
   const [loading, setLoading] = useState(false);
+  const [config, setConfig] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await api.get('/admin/config');
+        if (response.data.success) {
+          setConfig(response.data.config);
+        }
+      } catch (error) {
+        console.error('Failed to fetch config:', error);
+      }
+    };
+
+    fetchConfig();
+  }, []);
 
   // Statistics calculations
   const activeBots = bots.filter(bot => bot.isActive).length;
   const totalMessages = bots.reduce((sum, bot) => sum + bot.messageCount, 0);
   const connectedBots = bots.filter(bot => bot.status === 'connected').length;
+
+  const formatUptime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${minutes}m`;
+  };
+
+  const formatMemory = (bytes: number) => {
+    return `${Math.round(bytes / 1024 / 1024)}MB`;
+  };
 
   const handleCreateBot = async () => {
     if (!newBotName.trim()) return;
@@ -330,7 +358,7 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
           variant="contained"
           startIcon={<Add />}
           onClick={() => setCreateDialogOpen(true)}
-          disabled={loading || (user?.role === 'law_office' && (user.botCredits || 0) <= bots.length)}
+          disabled={loading}
         >
           Criar Novo Bot
         </Button>
@@ -371,6 +399,235 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
         )}
       </Box>
 
+      {/* System Status Overview */}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 2, gap: 1, mb: 4 }}>
+        <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Visão Geral dos Status
+            </Typography>
+            <Box sx={{ mb: 2 }}>
+              {['connected', 'waiting_for_scan', 'disconnected', 'error'].map(status => {
+                const count = bots.filter(bot => bot.status === status).length;
+                const color = {
+                  connected: 'success',
+                  waiting_for_scan: 'warning',
+                  disconnected: 'default',
+                  error: 'error'
+                }[status] as 'success' | 'warning' | 'default' | 'error';
+                
+                const statusLabels = {
+                  connected: 'Conectado',
+                  waiting_for_scan: 'Aguardando QR',
+                  disconnected: 'Desconectado',
+                  error: 'Erro'
+                };
+                
+                return (
+                  <Box key={status} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                    <Typography variant="body2">
+                      {statusLabels[status as keyof typeof statusLabels]}
+                    </Typography>
+                    <Chip 
+                      label={count} 
+                      color={color}
+                      size="small"
+                    />
+                  </Box>
+                );
+              })}
+            </Box>
+          </CardContent>
+        </Card>
+
+        {config && (
+          <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Configuração do Sistema
+              </Typography>
+              <Box>
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Status do Groq LLM
+                  </Typography>
+                  <Chip 
+                    label={config.groqConfigured ? 'Conectado' : 'Não Configurado'} 
+                    color={config.groqConfigured ? 'success' : 'error'}
+                    size="small"
+                  />
+                </Box>
+                
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Atrasos de Resposta
+                  </Typography>
+                  <Typography variant="body2">
+                    {config.responseDelays?.min || 0}ms - {config.responseDelays?.max || 0}ms
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Limite de Taxa
+                  </Typography>
+                  <Typography variant="body2">
+                    {config.rateLimit?.maxRequests || 0} solicitações por minuto
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+      </Box>
+          subtitle={`${connectedBots} conectados`}
+        />
+        
+        <StatsCard
+          title="Total de Mensagens"
+          value={totalMessages.toLocaleString()}
+          icon={<Message />}
+          color="#075E54"
+        />
+
+        {user?.role === 'law_office' && (
+          <StatsCard
+            title="Créditos de Bot"
+            value={user.botCredits || 0}
+            icon={<SmartToy />}
+            color="#FF6B35"
+            subtitle={`${bots.length} em uso`}
+          />
+        )}
+      </Box>
+
+      {/* System Status Overview */}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 2, gap: 1, mb: 4 }}>
+        <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Visão Geral dos Status
+            </Typography>
+            <Box sx={{ mb: 2 }}>
+              {['connected', 'waiting_for_scan', 'disconnected', 'error'].map(status => {
+                const count = bots.filter(bot => bot.status === status).length;
+                const color = {
+                  connected: 'success',
+                  waiting_for_scan: 'warning',
+                  disconnected: 'default',
+                  error: 'error'
+                }[status] as 'success' | 'warning' | 'default' | 'error';
+                
+                const statusLabels = {
+                  connected: 'Conectado',
+                  waiting_for_scan: 'Aguardando QR',
+                  disconnected: 'Desconectado',
+                  error: 'Erro'
+                };
+                
+                return (
+                  <Box key={status} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                    <Typography variant="body2">
+                      {statusLabels[status as keyof typeof statusLabels]}
+                    </Typography>
+                    <Chip 
+                      label={count} 
+                      color={color}
+                      size="small"
+                    />
+                  </Box>
+                );
+              })}
+            </Box>
+          </CardContent>
+        </Card>
+
+        {systemStatus && (
+          <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Status do Sistema
+              </Typography>
+              <Box>
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Tempo Ativo
+                  </Typography>
+                  <Typography variant="body1">
+                    {formatUptime(systemStatus.uptime)}
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Uso de Memória
+                  </Typography>
+                  <Typography variant="body1">
+                    {formatMemory(systemStatus.memory.heapUsed)}
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {config && (
+          <Card sx={{ minWidth: { xs: '100%', sm: 400 }, m: 1, flex: 1 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Configuração do Sistema
+              </Typography>
+              <Box>
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Status do Groq LLM
+                  </Typography>
+                  <Chip 
+                    label={config.groqConfigured ? 'Conectado' : 'Não Configurado'} 
+                    color={config.groqConfigured ? 'success' : 'error'}
+                    size="small"
+                  />
+                </Box>
+                
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Atrasos de Resposta
+                  </Typography>
+                  <Typography variant="body2">
+                    {config.responseDelays?.min || 0}ms - {config.responseDelays?.max || 0}ms
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="textSecondary">
+                    Limite de Taxa
+                  </Typography>
+                  <Typography variant="body2">
+                    {config.rateLimit?.maxRequests || 0} solicitações por minuto
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+      </Box>
+          </Typography>
+          {user?.role === 'law_office' && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Créditos disponíveis: <strong>{user.botCredits || 0}</strong> | Bots criados: <strong>{bots.length}</strong> | Restantes: <strong>{Math.max(0, (user.botCredits || 0) - bots.length)}</strong>
+            </Typography>
+          )}
+        </Box>
+        <Button
+          variant="contained"
+          startIcon={<Add />}
+          onClick={() => setCreateDialogOpen(true)}
+          disabled={loading || (user?.role === 'law_office' && (user.botCredits || 0) <= bots.length)}
+        >
+          Criar Novo Bot
+        </Button>
+      </Box>
+
       {/* Credits Warning for Law Office Users */}
       {user?.role === 'law_office' && (
         <>
@@ -379,7 +636,6 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
               Você não possui créditos suficientes para criar novos bots. Entre em contato com o administrador para obter mais créditos.
             </Alert>
           )}
-          
           {(user.botCredits || 0) - bots.length <= 1 && (user.botCredits || 0) > bots.length && (
             <Alert severity="info" sx={{ mb: 2 }}>
               Você possui apenas {(user.botCredits || 0) - bots.length} crédito(s) restante(s). Considere solicitar mais créditos ao administrador.
@@ -414,28 +670,28 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
 
       {/* Create Bot Dialog */}
       <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)}>
-        <DialogTitle>Criar Novo Bot</DialogTitle>
+        <DialogTitle>Create New Bot</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
-            label="Nome do Bot"
+            label="Bot Name"
             fullWidth
             variant="outlined"
             value={newBotName}
             onChange={(e) => setNewBotName(e.target.value)}
-            placeholder="Digite um nome para seu bot"
+            placeholder="Enter a name for your bot"
             sx={{ mb: 2 }}
           />
           <TextField
             margin="dense"
-            label="Nome do Assistente"
+            label="Assistant Name"
             fullWidth
             variant="outlined"
             value={newAssistantName}
             onChange={(e) => setNewAssistantName(e.target.value)}
-            placeholder="Digite o nome do assistente (ex: Ana, Maria, João)"
-            helperText="Este é o nome que seu bot usará ao conversar com clientes"
+            placeholder="Enter the assistant's name (e.g., Ana, Maria, João)"
+            helperText="This is the name your bot will use when talking to clients"
           />
         </DialogContent>
         <DialogActions>
@@ -443,13 +699,13 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
             setCreateDialogOpen(false);
             setNewBotName('');
             setNewAssistantName('Ana');
-          }}>Cancelar</Button>
+          }}>Cancel</Button>
           <Button 
             onClick={handleCreateBot} 
             variant="contained"
             disabled={!newBotName.trim() || !newAssistantName.trim() || loading}
           >
-            Criar
+            Create
           </Button>
         </DialogActions>
       </Dialog>

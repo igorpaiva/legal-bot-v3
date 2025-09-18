@@ -18,7 +18,6 @@ import {
 } from '@mui/material';
 import { AccountCircle as AccountIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
 import { io, Socket } from 'socket.io-client';
-import Dashboard from './components/Dashboard';
 import BotManager from './components/BotManager';
 import Reports from './components/Reports';
 import Lawyers from './components/Lawyers';
@@ -471,7 +470,6 @@ function App() {
   const getAvailableTabs = () => {
     if (user?.role === 'law_office') {
       return [
-        { label: 'Dashboard', key: 'dashboard' },
         { label: 'Gerenciar Bots', key: 'bots' },
         { label: 'Relatórios', key: 'reports' },
         { label: 'Advogados', key: 'lawyers' },
@@ -618,15 +616,10 @@ function App() {
             <Tabs 
               value={tabValue} 
               onChange={handleTabChange}
-              variant="scrollable"
-              scrollButtons="auto"
-              allowScrollButtonsMobile
+              variant="standard"
               sx={{
                 '& .MuiTabs-indicator': {
-                  backgroundColor: '#1976d2',
-                },
-                '& .MuiTabs-scrollButtons': {
-                  color: '#1976d2',
+                  display: 'none',
                 }
               }}
             >
@@ -660,31 +653,13 @@ function App() {
           {/* Law Office User Content */}
           {user?.role === 'law_office' && (
             <>
-              {getCurrentTabKey() === 'dashboard' && (
-                <>
-                  <Dashboard 
-                    bots={state.bots} 
-                    systemStatus={state.systemStatus}
-                    user={user}
-                  />
-                  
-                  <Box sx={{ mt: 4 }}>
-                    <BotManager 
-                      bots={state.bots}
-                      onNotification={showNotification}
-                      onUserDataRefresh={refreshUserData}
-                      user={user}
-                    />
-                  </Box>
-                </>
-              )}
-
               {getCurrentTabKey() === 'bots' && (
                 <BotManager 
                   bots={state.bots}
                   onNotification={showNotification}
                   onUserDataRefresh={refreshUserData}
                   user={user}
+                  systemStatus={state.systemStatus}
                 />
               )}
 
