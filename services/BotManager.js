@@ -239,6 +239,15 @@ export class BotManager {
       // Setup event handlers
       this.setupBaileysEvents(botData);
       
+      // Load conversations from database for this bot
+      try {
+        console.log(`📁 Loading conversations from database for bot ${botId}`);
+        await botData.conversationFlowService.loadConversationsFromDatabase(botId);
+        console.log(`✅ Successfully loaded conversations for bot ${botId}`);
+      } catch (error) {
+        console.error(`❌ Error loading conversations for bot ${botId}:`, error);
+      }
+      
       // Mark initialization as complete
       botData.isInitializing = false;
       
@@ -655,6 +664,15 @@ export class BotManager {
       };
 
       this.bots.set(config.id, botData);
+      
+      // Load conversations from database for this restored bot
+      try {
+        console.log(`📁 Loading conversations from database for restored bot ${config.id}`);
+        await botData.conversationFlowService.loadConversationsFromDatabase(config.id);
+        console.log(`✅ Successfully loaded conversations for restored bot ${config.id}`);
+      } catch (error) {
+        console.error(`❌ Error loading conversations for restored bot ${config.id}:`, error);
+      }
       
       // Try to restore the Baileys connection
       await this.initializeBaileysBot(config.id, config.name, config.assistantName);
