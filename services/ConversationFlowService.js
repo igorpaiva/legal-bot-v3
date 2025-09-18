@@ -362,45 +362,41 @@ export class ConversationFlowService {
     
     console.log(`[BURST] Added message to burst for ${phone}: "${messageText}". Using ${timeout}ms timeout. Queue: ${this.pendingMessages.get(burstKey).length} messages`);
     
-    // Set a timeout to process all messages after calculated delay
-    const timeoutId = setTimeout(async () => {
-      try {
-        console.log(`[BURST] Processing burst for ${phone} after ${timeout}ms timeout`);
-        
-        const allMessages = this.pendingMessages.get(burstKey) || [];
-        const combinedMessage = allMessages.join('\n\n');
-        
-        // Clean up
-        this.pendingMessages.delete(burstKey);
-        this.messageTimeouts.delete(burstKey);
-        
-        // Process the combined message
-        this.saveIncomingMessage(conversation, combinedMessage);
-        const response = await this.processConversationState(conversation, combinedMessage, client);
-        
-        if (response && response.trim()) {
-          this.saveOutgoingMessage(conversation, response);
+    // Return a Promise that resolves when the burst is processed
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(async () => {
+        try {
+          console.log(`[BURST] Processing burst for ${phone} after ${timeout}ms timeout`);
           
-          // Use callback to send response if provided
-          if (sendResponseCallback) {
-            await sendResponseCallback(response);
-          } else {
-            console.log(`[BURST] Would send response: ${response}`);
+          const allMessages = this.pendingMessages.get(burstKey) || [];
+          const combinedMessage = allMessages.join('\n\n');
+          
+          // Clean up
+          this.pendingMessages.delete(burstKey);
+          this.messageTimeouts.delete(burstKey);
+          
+          // Process the combined message
+          this.saveIncomingMessage(conversation, combinedMessage);
+          const response = await this.processConversationState(conversation, combinedMessage, client);
+          
+          if (response && response.trim()) {
+            this.saveOutgoingMessage(conversation, response);
           }
+          
+          conversation.lastActivityAt = new Date();
+          this.saveConversations();
+          
+          // Resolve the Promise with the response
+          resolve(response);
+          
+        } catch (error) {
+          console.error('[BURST] Error processing message burst:', error);
+          reject(error);
         }
-        
-        conversation.lastActivityAt = new Date();
-        this.saveConversations();
-        
-      } catch (error) {
-        console.error('[BURST] Error processing message burst:', error);
-      }
-    }, timeout);
-    
-    this.messageTimeouts.set(burstKey, timeoutId);
-    
-    // Return null to indicate we're waiting for more messages
-    return null;
+      }, timeout);
+      
+      this.messageTimeouts.set(burstKey, timeoutId);
+    });
   }
 
   calculateDynamicTimeout(conversation, messageText) {
@@ -518,7 +514,19 @@ INSTRUÇÕES:
 
 Responda APENAS com sua mensagem:`;
 
-      return await this.groqService.generateResponse(greetingPrompt);
+      try {
+        const response = await this.groqService.generateResponse(greetingPrompt);
+        
+        if (!response || typeof response !== 'string' || response.trim().length === 0) {
+          console.error('Invalid response from GroqService in handleGreeting (returning user):', response);
+          return `Olá ${firstName}! Como vai? Vamos conversar sobre sua situação jurídica. Pode me contar os detalhes?`;
+        }
+        
+        return response.trim();
+      } catch (error) {
+        console.error('Error in handleGreeting (returning user):', error);
+        return `Olá ${firstName}! Como vai? Vamos conversar sobre sua situação jurídica. Pode me contar os detalhes?`;
+      }
     }
     
     // Check if we have name but no email
@@ -540,7 +548,19 @@ INSTRUÇÕES:
 
 Responda APENAS com sua mensagem:`;
 
-      return await this.groqService.generateResponse(emailPrompt);
+      try {
+        const response = await this.groqService.generateResponse(emailPrompt);
+        
+        if (!response || typeof response !== 'string' || response.trim().length === 0) {
+          console.error('Invalid response from GroqService in handleGreeting (email collection):', response);
+          return `Olá ${firstName}! Para manter você atualizado sobre o andamento, preciso do seu email. Qual o melhor email para contato?`;
+        }
+        
+        return response.trim();
+      } catch (error) {
+        console.error('Error in handleGreeting (email collection):', error);
+        return `Olá ${firstName}! Para manter você atualizado sobre o andamento, preciso do seu email. Qual o melhor email para contato?`;
+      }
     }
     
     // Normal greeting flow - ask for name
@@ -566,7 +586,21 @@ INSTRUÇÕES:
 
 Responda APENAS com sua mensagem em português:`;
 
-    return await this.groqService.generateResponse(greetingPrompt);
+    try {
+      const response = await this.groqService.generateResponse(greetingPrompt);
+      
+      // Validate response
+      if (!response || typeof response !== 'string' || response.trim().length === 0) {
+        console.error('Invalid response from GroqService in handleGreeting:', response);
+        return `Olá! Sou a ${this.assistantName}, assistente jurídica do escritório ${await this.getLawOfficeName()}. Como posso chamar você?`;
+      }
+      
+      return response.trim();
+    } catch (error) {
+      console.error('Error in handleGreeting:', error);
+      const lawOfficeName = await this.getLawOfficeName();
+      return `Olá! Sou a ${this.assistantName}, assistente jurídica do escritório ${lawOfficeName}. Como posso chamar você?`;
+    }
   }
 
   detectCaseDetailsInMessage(messageText) {

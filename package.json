@@ -14,6 +14,7 @@
     "clean:db": "./clean_system.sh"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.3",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.2.0",
     "cors": "^2.8.5",
@@ -27,9 +28,10 @@
     "multer": "^2.0.2",
     "node-cron": "^3.0.3",
     "pdf2json": "^3.2.0",
+    "pino": "^9.10.0",
     "playwright": "^1.55.0",
     "puppeteer": "^24.19.0",
-    "qrcode": "^1.5.3",
+    "qrcode": "^1.5.4",
     "rate-limiter-flexible": "^2.4.2",
     "socket.io": "^4.7.4",
     "sqlite3": "^5.1.7",

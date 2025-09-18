@@ -363,12 +363,25 @@ function App() {
     });
 
     socket.on('bots-status', (data: { bots: Bot[], total: number, active: number }) => {
-      setState(prev => ({ ...prev, bots: data.bots }));
+      console.log('Received bots-status:', data.bots.length, 'bots');
+      // Completely replace bots array to avoid duplicates
+      setState(prev => ({ 
+        ...prev, 
+        bots: [...data.bots] // Force new array reference
+      }));
     });
 
     socket.on('bot-created', (bot: Bot) => {
       console.log('Bot created:', bot);
-      setState(prev => ({ ...prev, bots: [...prev.bots, bot] }));
+      setState(prev => {
+        // Check if bot already exists to prevent duplicates
+        const existingBotIndex = prev.bots.findIndex(b => b.id === bot.id);
+        if (existingBotIndex >= 0) {
+          console.warn('Bot creation ignored - bot already exists:', bot.id);
+          return prev;
+        }
+        return { ...prev, bots: [...prev.bots, bot] };
+      });
     });
 
     socket.on('bot-updated', (bot: Bot) => {
@@ -383,11 +396,12 @@ function App() {
         if (existingBotIndex >= 0) {
           // Update existing bot
           const updatedBots = [...prev.bots];
-          updatedBots[existingBotIndex] = bot;
+          updatedBots[existingBotIndex] = { ...bot };
           return { ...prev, bots: updatedBots };
         } else {
-          // Add new bot (fallback if bot-created wasn't received)
-          return { ...prev, bots: [...prev.bots, bot] };
+          // Bot doesn't exist - this should not happen as bot-created handles new bots
+          console.warn('Bot update received for non-existent bot:', bot.id);
+          return prev;
         }
       });
     });
