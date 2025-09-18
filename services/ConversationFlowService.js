@@ -1772,6 +1772,7 @@ Responda APENAS com sua mensagem:`;
       
       this.conversations = new Map();
       this.clients = new Map();
+      this.messages = new Map(); // Ensure messages map is initialized
       
       for (const dbConv of dbConversations) {
         // Convert database conversation to ConversationFlowService format
@@ -1780,7 +1781,7 @@ Responda APENAS com sua mensagem:`;
           client: {
             phone: dbConv.clientPhone,
             name: dbConv.clientName,
-            email: null, // Will be loaded from client data if available
+            email: dbConv.clientEmail || null,
             createdAt: dbConv.startTime
           },
           state: this.mapDatabaseStatusToState(dbConv.status),
@@ -1788,6 +1789,35 @@ Responda APENAS com sua mensagem:`;
           lastActivityAt: new Date(dbConv.startTime),
           conversationHistory: []
         };
+
+        // Load associated triage data
+        const triage = DatabaseService.getTriageByConversationId(dbConv.id);
+        if (triage && triage.triage_json) {
+          try {
+            const triageData = JSON.parse(triage.triage_json);
+            conversation.analysis = triageData;
+            
+            // Create analysis message for compatibility with in-memory structure
+            if (!this.messages.has(conversation.id)) {
+              this.messages.set(conversation.id, []);
+            }
+            
+            const analysisMessage = {
+              id: this.messageIdCounter++,
+              conversation: conversation,
+              direction: 'ANALYSIS',
+              body: JSON.stringify(triageData, null, 2),
+              timestamp: new Date(triage.created_at || dbConv.startTime),
+              rawPayload: triageData
+            };
+            
+            this.messages.get(conversation.id).push(analysisMessage);
+            console.log(`[DEBUG] loadConversationsFromDatabase - Loaded triage for conversation: ${conversation.id}`);
+          } catch (error) {
+            console.warn(`[WARNING] loadConversationsFromDatabase - Failed to parse triage JSON for conversation ${dbConv.id}:`, error);
+            console.warn(`[WARNING] Corrupted triage JSON:`, triage.triage_json.substring(0, 200) + '...');
+          }
+        }
 
         // Validate the conversation structure
         if (conversation.client && 
@@ -1799,7 +1829,7 @@ Responda APENAS com sua mensagem:`;
           // Store client data
           this.clients.set(conversation.client.phone, conversation.client);
           
-          console.log(`[DEBUG] loadConversationsFromDatabase - Loaded conversation: ${conversation.id}, client: ${conversation.client.phone}, state: ${conversation.state}`);
+          console.log(`[DEBUG] loadConversationsFromDatabase - Loaded conversation: ${conversation.id}, client: ${conversation.client.phone}, state: ${conversation.state}, triage: ${!!conversation.analysis}`);
         } else {
           console.warn(`[WARNING] loadConversationsFromDatabase - Skipping invalid conversation:`, dbConv);
         }

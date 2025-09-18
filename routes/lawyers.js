@@ -62,24 +62,29 @@ function formatPhoneForWhatsApp(phone) {
   return `+${numbers}`;
 }
 
-// GET /api/lawyers - Get all lawyers
+// GET /api/lawyers - Get all lawyers for the authenticated user
 router.get('/', async (req, res) => {
   try {
     const lawyers = await loadLawyers();
-    res.json(lawyers);
+    // Filter lawyers by owner (only show user's own lawyers)
+    const userLawyers = lawyers.filter(lawyer => lawyer.ownerId === req.user.id);
+    res.json(userLawyers);
   } catch (error) {
     console.error('Error loading lawyers:', error);
     res.status(500).json({ error: 'Failed to load lawyers' });
   }
 });
 
-// GET /api/lawyers/by-specialty/:specialty - Get lawyers by specialty
+// GET /api/lawyers/by-specialty/:specialty - Get lawyers by specialty for the authenticated user
 router.get('/by-specialty/:specialty', async (req, res) => {
   try {
     const { specialty } = req.params;
     const lawyers = await loadLawyers();
+    // Filter by both specialty and owner
     const specialtyLawyers = lawyers.filter(
-      lawyer => lawyer.specialty === specialty && lawyer.isActive
+      lawyer => lawyer.specialty === specialty && 
+                lawyer.isActive && 
+                lawyer.ownerId === req.user.id
     );
     res.json(specialtyLawyers);
   } catch (error) {
@@ -106,8 +111,8 @@ router.post('/', async (req, res) => {
 
     const lawyers = await loadLawyers();
 
-    // Check if phone already exists
-    if (lawyers.some(lawyer => lawyer.phone === phoneNumbers)) {
+    // Check if phone already exists for this user
+    if (lawyers.some(lawyer => lawyer.phone === phoneNumbers && lawyer.ownerId === req.user.id)) {
       return res.status(400).json({ error: 'Phone number already registered' });
     }
 
@@ -118,6 +123,7 @@ router.post('/', async (req, res) => {
       phone: phoneNumbers,
       email: email?.trim() || null,
       isActive: true,
+      ownerId: req.user.id, // Add owner ID for isolation
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -150,14 +156,18 @@ router.put('/:id', async (req, res) => {
     }
 
     const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id);
+    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
 
     if (lawyerIndex === -1) {
-      return res.status(404).json({ error: 'Lawyer not found' });
+      return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
-    // Check if phone already exists (excluding current lawyer)
-    if (lawyers.some((lawyer, index) => index !== lawyerIndex && lawyer.phone === phoneNumbers)) {
+    // Check if phone already exists for this user (excluding current lawyer)
+    if (lawyers.some((lawyer, index) => 
+      index !== lawyerIndex && 
+      lawyer.phone === phoneNumbers && 
+      lawyer.ownerId === req.user.id
+    )) {
       return res.status(400).json({ error: 'Phone number already registered' });
     }
 
@@ -184,10 +194,10 @@ router.patch('/:id/toggle-active', async (req, res) => {
   try {
     const { id } = req.params;
     const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id);
+    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
 
     if (lawyerIndex === -1) {
-      return res.status(404).json({ error: 'Lawyer not found' });
+      return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
     lawyers[lawyerIndex].isActive = !lawyers[lawyerIndex].isActive;
@@ -206,10 +216,10 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id);
+    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
 
     if (lawyerIndex === -1) {
-      return res.status(404).json({ error: 'Lawyer not found' });
+      return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
     lawyers.splice(lawyerIndex, 1);

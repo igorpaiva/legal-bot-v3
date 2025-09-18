@@ -7,7 +7,8 @@ import { Readable } from 'stream';
  * Google Drive Service for document upload and management
  */
 class GoogleDriveService {
-  constructor() {
+  constructor(userId = null) {
+    this.userId = userId; // User ID for isolated storage
     this.drive = null;
     this.auth = null;
     this.initialized = false;
@@ -51,37 +52,48 @@ class GoogleDriveService {
   }
 
   /**
-   * Load saved OAuth tokens
+   * Load saved OAuth tokens for this user
    */
   async loadTokens() {
     try {
-      const tokenPath = path.join(process.cwd(), 'config', 'google-tokens.json');
+      const tokenPath = this.getTokenPath();
       const tokenData = await fs.readFile(tokenPath, 'utf8');
       const tokens = JSON.parse(tokenData);
       
       this.auth.setCredentials(tokens);
-      console.log('Google Drive tokens loaded successfully');
+      console.log(`Google Drive tokens loaded successfully for user ${this.userId}`);
     } catch (error) {
-      console.warn('No saved Google Drive tokens found:', error.message);
+      console.warn(`No saved Google Drive tokens found for user ${this.userId}:`, error.message);
       // Don't throw here - tokens might be set through other means
     }
   }
 
   /**
-   * Save OAuth tokens
+   * Get token file path for this user
+   */
+  getTokenPath() {
+    if (!this.userId) {
+      // Fallback to global tokens for backward compatibility
+      return path.join(process.cwd(), 'config', 'google-tokens.json');
+    }
+    return path.join(process.cwd(), 'config', `google-tokens-${this.userId}.json`);
+  }
+
+  /**
+   * Save OAuth tokens for this user
    */
   async saveTokens(tokens) {
     try {
-      const tokenPath = path.join(process.cwd(), 'config', 'google-tokens.json');
+      const tokenPath = this.getTokenPath();
       const configDir = path.dirname(tokenPath);
       
       // Ensure config directory exists
       await fs.mkdir(configDir, { recursive: true });
       
       await fs.writeFile(tokenPath, JSON.stringify(tokens, null, 2));
-      console.log('Google Drive tokens saved successfully');
+      console.log(`Google Drive tokens saved successfully for user ${this.userId}`);
     } catch (error) {
-      console.error('Error saving Google Drive tokens:', error);
+      console.error(`Error saving Google Drive tokens for user ${this.userId}:`, error);
     }
   }
 
@@ -97,7 +109,8 @@ class GoogleDriveService {
     return this.auth.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
-      prompt: 'consent'
+      prompt: 'consent',
+      state: this.userId || 'global' // Include user ID in state parameter
     });
   }
 

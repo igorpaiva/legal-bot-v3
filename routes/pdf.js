@@ -56,14 +56,30 @@ router.get('/conversation/:conversationId', async (req, res) => {
       }
     }
     
+    // Declare dbConversation outside the if block for permission checking
+    let dbConversation = null;
+    
     if (!conversation) {
       // Buscar no banco de dados
-      const dbConversation = DatabaseService.getConversationById(conversationId);
+      dbConversation = DatabaseService.getConversationById(conversationId);
       if (!dbConversation) {
         return res.status(404).json({ error: 'Conversation not found (DB)' });
       }
       // Buscar triagem associada
       const triage = DatabaseService.getTriageByConversationId(conversationId);
+      
+      // Parse triage JSON safely
+      let triageAnalysis = null;
+      if (triage && triage.triage_json) {
+        try {
+          triageAnalysis = JSON.parse(triage.triage_json);
+        } catch (error) {
+          console.error('Error parsing triage JSON for conversation', conversationId, ':', error);
+          console.error('Corrupted triage JSON:', triage.triage_json);
+          triageAnalysis = null;
+        }
+      }
+      
       // Montar objeto no formato esperado pelo PDF
       conversation = {
         id: dbConversation.id,
@@ -74,7 +90,7 @@ router.get('/conversation/:conversationId', async (req, res) => {
         },
         state: dbConversation.status || 'COMPLETED',
         startTime: dbConversation.startTime,
-        triageAnalysis: triage ? (triage.triage_json ? JSON.parse(triage.triage_json) : null) : null,
+        triageAnalysis: triageAnalysis,
         botName: dbConversation.botName || dbConversation.botId || 'N/A'
       };
     }

@@ -21,6 +21,7 @@ import DatabaseService from './services/DatabaseService.js';
 import DataMigration from './scripts/migrate-data.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { authenticateUser, requireLawOffice } from './middleware/auth.js';
 
 dotenv.config();
 
@@ -94,13 +95,13 @@ app.use('/api/pdf', pdfRoutes);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Other routes
+// Other routes (with authentication middleware)
 app.use('/api/auth', authRoutes);
-app.use('/api/bot', botRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/lawyers', lawyersRoutes);
-app.use('/api/monitoring', monitoringRoutes);
-app.use('/api/google-drive', googleDriveRoutes);
+app.use('/api/bot', authenticateUser, botRoutes);
+app.use('/api/admin', authenticateUser, adminRoutes);
+app.use('/api/lawyers', authenticateUser, requireLawOffice, lawyersRoutes);
+app.use('/api/monitoring', authenticateUser, monitoringRoutes);
+app.use('/api/google-drive', authenticateUser, requireLawOffice, googleDriveRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

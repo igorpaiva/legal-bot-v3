@@ -4,7 +4,6 @@ import { google } from 'googleapis';
 import GoogleDriveService from '../services/GoogleDriveService.js';
 
 const router = express.Router();
-const googleDriveService = new GoogleDriveService();
 
 // Configure multer for file uploads
 const upload = multer({ 
@@ -30,8 +29,10 @@ router.get('/auth-url', async (req, res) => {
       });
     }
 
-    await googleDriveService.initialize();
-    const authUrl = googleDriveService.getAuthUrl();
+    // Initialize service for this specific user
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    await userGoogleDriveService.initialize();
+    const authUrl = userGoogleDriveService.getAuthUrl();
 
     res.json({
       success: true,
@@ -49,22 +50,9 @@ router.get('/auth-url', async (req, res) => {
 /**
  * Handle OAuth callback
  */
-router.get('/callback', async (req, res) => {
+router.get('/oauth/callback', async (req, res) => {
   try {
-    const { code, error } = req.query;
-
-    if (error) {
-      console.error('OAuth error:', error);
-      return res.status(400).send(`
-        <html>
-          <body>
-            <h1>Google Drive Authentication Error</h1>
-            <p>Error: ${error}</p>
-            <p><a href="/admin">Back to Admin Panel</a></p>
-          </body>
-        </html>
-      `);
-    }
+    const { code, state } = req.query;
 
     if (!code) {
       return res.status(400).send(`
@@ -87,10 +75,14 @@ router.get('/callback', async (req, res) => {
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
     
-    // Save tokens
-    await googleDriveService.setCredentials(tokens);
+    // Get user ID from state parameter
+    const userId = state && state !== 'global' ? state : null;
+    
+    // Create user-specific Google Drive service
+    const userGoogleDriveService = new GoogleDriveService(userId);
+    await userGoogleDriveService.setCredentials(tokens);
 
-    console.log('Google Drive tokens saved successfully');
+    console.log(`Google Drive tokens saved successfully for user ${userId || 'global'}`);
 
     // Show success page
     res.send(`
@@ -126,7 +118,8 @@ router.get('/callback', async (req, res) => {
  */
 router.get('/auth-status', async (req, res) => {
   try {
-    const status = await googleDriveService.checkAuthentication();
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    const status = await userGoogleDriveService.checkAuthentication();
     
     res.json({
       success: true,
@@ -148,7 +141,8 @@ router.get('/auth-status', async (req, res) => {
  */
 router.get('/storage-info', async (req, res) => {
   try {
-    const storageInfo = await googleDriveService.getStorageInfo();
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    const storageInfo = await userGoogleDriveService.getStorageInfo();
     
     res.json({
       success: true,
@@ -185,7 +179,8 @@ router.post('/upload-client-document', upload.single('file'), async (req, res) =
       });
     }
 
-    const result = await googleDriveService.uploadClientDocument(
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    const result = await userGoogleDriveService.uploadClientDocument(
       clientName,
       clientPhone,
       file.buffer,
@@ -213,7 +208,8 @@ router.get('/client-documents/:clientName/:clientPhone', async (req, res) => {
   try {
     const { clientName, clientPhone } = req.params;
 
-    const documents = await googleDriveService.listClientDocuments(
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    const documents = await userGoogleDriveService.listClientDocuments(
       decodeURIComponent(clientName),
       clientPhone
     );
@@ -245,7 +241,8 @@ router.post('/ensure-client-folder', async (req, res) => {
       });
     }
 
-    const folderId = await googleDriveService.ensureClientFolder(clientName, clientPhone);
+    const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    const folderId = await userGoogleDriveService.ensureClientFolder(clientName, clientPhone);
 
     res.json({
       success: true,
