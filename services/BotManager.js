@@ -22,6 +22,11 @@ export class BotManager {
     this.reconnectionManager = new Map(); // Track reconnection attempts per bot
     this.gracefulShutdown = false; // Flag para graceful shutdown
 
+    // **CONFIGURAÇÃO DE FILTRO DE MENSAGENS ANTIGAS**
+    // Máximo tempo para processar mensagens (evita processar histórico do WhatsApp)
+    this.maxMessageAge = parseInt(process.env.MAX_MESSAGE_AGE_SECONDS) || 30; // Padrão: 30 segundos
+    console.log(`BotManager configurado para processar apenas mensagens dos últimos ${this.maxMessageAge} segundos`);
+
     // Load persisted bots on startup
     this.loadPersistedData();
 
@@ -989,6 +994,7 @@ export class BotManager {
       botData.isRestoring = false; // Clear restoration flag
       botData.restorationAttempts = 0; // Reset restoration attempts counter
       console.log(`Bot ${id} authenticated and ready!`);
+      console.log(`Bot ${id} - Message age filter: only processing messages newer than ${this.maxMessageAge} seconds`);
       this.emitBotUpdate(id);
       // Save bot state when ready (with a small delay to avoid rapid saves)
       setTimeout(() => {
@@ -1140,6 +1146,18 @@ export class BotManager {
     client.on('message_create', async (message) => {
       // Only respond to messages received by the bot, not sent by it
       if (message.fromMe) return;
+      
+      // **FILTRO CRÍTICO: Evitar processar mensagens antigas (histórico do WhatsApp)**
+      // Só processar mensagens recentes para evitar sobrecarregar com histórico
+      const messageTimestamp = message.timestamp * 1000; // Convert to milliseconds
+      const now = Date.now();
+      const messageAge = now - messageTimestamp;
+      const maxMessageAge = this.maxMessageAge * 1000; // Convert to milliseconds
+      
+      if (messageAge > maxMessageAge) {
+        console.log(`Bot ${id} - Skipping old message (${Math.round(messageAge/1000)}s ago) to prevent history processing`);
+        return;
+      }
       
       // Prevent duplicate message processing
       const messageId = message.id._serialized || message.id;
