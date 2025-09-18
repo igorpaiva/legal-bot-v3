@@ -25,7 +25,9 @@ export class BotManager {
     // **CONFIGURAÇÃO DE FILTRO DE MENSAGENS ANTIGAS**
     // Máximo tempo para processar mensagens (evita processar histórico do WhatsApp)
     this.maxMessageAge = parseInt(process.env.MAX_MESSAGE_AGE_SECONDS) || 30; // Padrão: 30 segundos
-    console.log(`BotManager configurado para processar apenas mensagens dos últimos ${this.maxMessageAge} segundos`);
+    this.maxOfflineRecoveryHours = parseInt(process.env.MAX_OFFLINE_RECOVERY_HOURS) || 24; // Padrão: 24 horas
+    console.log(`BotManager configurado para processar apenas mensagens dos últimos ${this.maxMessageAge} segundos (primeira conexão)`);
+    console.log(`BotManager configurado para recuperar mensagens offline das últimas ${this.maxOfflineRecoveryHours} horas (reconexões)`);
 
     // Load persisted bots on startup
     this.loadPersistedData();
@@ -586,6 +588,7 @@ export class BotManager {
         isRestoring: true, // Flag to indicate this is a restoration
         restorationTimeout: null, // Timeout handle for restoration attempts
         restorationAttempts: 0, // Counter for restoration attempts
+        hasConnectedBefore: !!config.phoneNumber, // True if bot has phone number (connected before)
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this), // Pass assistant name and botManager
         groqService: new GroqService(), // Add AI service
         humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
@@ -805,6 +808,7 @@ export class BotManager {
       isRestoring: false, // Flag to indicate if bot is being restored
       restorationTimeout: null, // Timeout handle for restoration attempts
       restorationAttempts: 0, // Counter for restoration attempts
+      hasConnectedBefore: false, // First time connecting
       conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), defaultAssistantName, this), // Pass assistant name and botManager to conversation service
       groqService: new GroqService(), // Add AI service
       humanLikeDelay: new HumanLikeDelay(), // Add human-like delay service
@@ -993,8 +997,17 @@ export class BotManager {
       botData.lastActivity = new Date();
       botData.isRestoring = false; // Clear restoration flag
       botData.restorationAttempts = 0; // Reset restoration attempts counter
+      
+      // Mark as connected before if this is first successful connection
+      if (!botData.hasConnectedBefore) {
+        botData.hasConnectedBefore = true;
+        console.log(`Bot ${id} - First successful connection! Will process offline messages on future reconnections.`);
+      } else {
+        console.log(`Bot ${id} - Reconnected! Processing missed messages since last activity.`);
+      }
+      
       console.log(`Bot ${id} authenticated and ready!`);
-      console.log(`Bot ${id} - Message age filter: only processing messages newer than ${this.maxMessageAge} seconds`);
+      console.log(`Bot ${id} - Message age filter: ${botData.hasConnectedBefore ? 'flexible (reconnection)' : 'strict (first connection)'}`);
       this.emitBotUpdate(id);
       // Save bot state when ready (with a small delay to avoid rapid saves)
       setTimeout(() => {
@@ -1147,16 +1160,43 @@ export class BotManager {
       // Only respond to messages received by the bot, not sent by it
       if (message.fromMe) return;
       
-      // **FILTRO CRÍTICO: Evitar processar mensagens antigas (histórico do WhatsApp)**
-      // Só processar mensagens recentes para evitar sobrecarregar com histórico
+      // **FILTRO INTELIGENTE DE MENSAGENS POR IDADE**
+      // Comportamento diferente para primeira conexão vs reconexões
       const messageTimestamp = message.timestamp * 1000; // Convert to milliseconds
       const now = Date.now();
       const messageAge = now - messageTimestamp;
-      const maxMessageAge = this.maxMessageAge * 1000; // Convert to milliseconds
+      
+      let maxMessageAge;
+      let filterReason;
+      
+      if (!botData.hasConnectedBefore) {
+        // **PRIMEIRA CONEXÃO**: Filtro rigoroso - apenas mensagens dos últimos segundos
+        maxMessageAge = this.maxMessageAge * 1000;
+        filterReason = "first connection - avoiding history processing";
+      } else {
+        // **RECONEXÃO**: Filtro flexível - mensagens desde última atividade ou últimas horas configuradas
+        const lastActivityTime = botData.lastActivity ? botData.lastActivity.getTime() : 0;
+        const timeSinceLastActivity = now - lastActivityTime;
+        const maxOfflineAge = this.maxOfflineRecoveryHours * 60 * 60 * 1000; // Horas configuradas
+        
+        // Se estava offline por menos do limite configurado, processa mensagens desde última atividade
+        // Se estava offline por mais tempo, processa apenas últimas 2 horas
+        if (timeSinceLastActivity < maxOfflineAge && lastActivityTime > 0) {
+          maxMessageAge = timeSinceLastActivity + (5 * 60 * 1000); // Última atividade + 5min buffer
+          filterReason = "reconnection - processing since last activity";
+        } else {
+          maxMessageAge = 2 * 60 * 60 * 1000; // 2 horas para offline longo
+          filterReason = "reconnection - long offline, processing last 2 hours";
+        }
+      }
       
       if (messageAge > maxMessageAge) {
-        console.log(`Bot ${id} - Skipping old message (${Math.round(messageAge/1000)}s ago) to prevent history processing`);
+        console.log(`Bot ${id} - Skipping old message (${Math.round(messageAge/1000)}s ago, ${filterReason})`);
         return;
+      } else if (!botData.hasConnectedBefore) {
+        console.log(`Bot ${id} - Processing recent message (${Math.round(messageAge/1000)}s ago, first connection)`);
+      } else {
+        console.log(`Bot ${id} - Processing offline message (${Math.round(messageAge/1000)}s ago, reconnection)`);
       }
       
       // Prevent duplicate message processing
