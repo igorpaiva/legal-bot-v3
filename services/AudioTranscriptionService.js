@@ -23,8 +23,26 @@ export class AudioTranscriptionService {
     try {
       let audioFilePath;
       
-      // Handle WhatsApp media object
-      if (typeof mediaInput === 'object' && mediaInput.data) {
+      // Handle Buffer (from Baileys downloadMediaMessage)
+      if (Buffer.isBuffer(mediaInput)) {
+        console.log(`Transcribing audio from Buffer - size: ${mediaInput.length} bytes`);
+        
+        // Create temporary file from buffer data
+        const audioExtension = 'ogg'; // Default to ogg for WhatsApp audio
+        tempFilePath = path.join(process.cwd(), 'temp', `audio_${Date.now()}.${audioExtension}`);
+        
+        // Ensure temp directory exists
+        const tempDir = path.dirname(tempFilePath);
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
+        
+        // Write buffer data to temporary file
+        fs.writeFileSync(tempFilePath, mediaInput);
+        audioFilePath = tempFilePath;
+        
+        console.log(`Created temporary audio file from buffer: ${audioFilePath} (${mediaInput.length} bytes)`);
+      } else if (typeof mediaInput === 'object' && mediaInput.data) {
         console.log(`Transcribing audio from WhatsApp media object - mimetype: ${mediaInput.mimetype}`);
         
         // Create temporary file from media data
@@ -48,7 +66,7 @@ export class AudioTranscriptionService {
         audioFilePath = mediaInput;
         console.log(`Transcribing audio file: ${audioFilePath}`);
       } else {
-        throw new Error('Invalid input: expected WhatsApp media object or file path');
+        throw new Error('Invalid input: expected Buffer, WhatsApp media object or file path');
       }
       
       // Check if file exists

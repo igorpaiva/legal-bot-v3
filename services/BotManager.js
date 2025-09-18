@@ -474,11 +474,8 @@ export class BotManager {
                 // Upload to Google Drive
                 await this.uploadMediaToGoogleDrive(botData, media, contactName, contactNumber, 'audio');
                 
-                // Transcribe audio
-                const transcription = await botData.audioTranscriptionService.transcribeAudio({
-                  data: media.toString('base64'),
-                  mimetype: audioMessage.mimetype
-                });
+                // Transcribe audio - pass the Buffer directly
+                const transcription = await botData.audioTranscriptionService.transcribeAudio(media);
                 
                 if (transcription) {
                   messageText = transcription;
