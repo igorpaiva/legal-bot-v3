@@ -42,10 +42,10 @@ export class BotManager {
   // Load persisted bots and conversations
   async loadPersistedData() {
     try {
-      console.log('Loading persisted bot data...');
+      console.log('Loading persisted bot data from extended table...');
       
-      // Load bot configurations from database
-      const botConfigs = DatabaseService.getAllBots();
+      // Load bot configurations from new extended database table
+      const botConfigs = DatabaseService.getAllBotsExtended();
       
       for (const config of botConfigs) {
         // Try to restore bots that were previously active, authenticated, or in initialization process
@@ -65,7 +65,7 @@ export class BotManager {
         }
       }
       
-      console.log(`Loaded ${botConfigs.length} bot configurations`);
+      console.log(`Loaded ${botConfigs.length} bot configurations from extended table`);
       
     } catch (error) {
       console.error('Error loading persisted data:', error);
@@ -121,6 +121,15 @@ export class BotManager {
       console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
       shutdown('UNHANDLED_REJECTION');
     });
+  }
+
+  // Utility method to update bot in extended database
+  updateBotInDatabase(botId, updates) {
+    try {
+      DatabaseService.updateBotExtended(botId, updates);
+    } catch (error) {
+      console.error(`Error updating bot ${botId} in extended database:`, error);
+    }
   }
 
   // Graceful shutdown para um bot específico
@@ -821,9 +830,9 @@ export class BotManager {
       this.setupBotEvents(botData);
       this.setupRetryCallbacks(botData);
       
-      // Save bot to database
+      // Save bot to extended database table
       try {
-        DatabaseService.createBot({
+        DatabaseService.createBotExtended({
           id: botId,
           name: botName,
           assistantName: defaultAssistantName,
@@ -832,10 +841,18 @@ export class BotManager {
           phoneNumber: null,
           isActive: false,
           messageCount: 0,
-          lastActivity: null
+          lastActivity: null,
+          sessionPath: `./sessions/session-${botId}`,
+          qrCode: null,
+          connectionAttempts: 0,
+          lastError: null,
+          hasConnectedBefore: false,
+          lastQrGenerated: null,
+          restorationAttempts: 0
         });
+        console.log(`Bot ${botId} saved to extended database successfully`);
       } catch (error) {
-        console.error(`Error saving bot to database:`, error);
+        console.error(`Error saving bot to extended database:`, error);
       }
       
       // Emit bot created event only to the owner
@@ -1012,11 +1029,15 @@ export class BotManager {
       // Save bot state when ready (with a small delay to avoid rapid saves)
       setTimeout(() => {
         try {
-          DatabaseService.updateBot(id, {
+          this.updateBotInDatabase(id, {
             status: 'ready',
             isActive: true,
             phoneNumber: botData.phoneNumber,
-            lastActivity: botData.lastActivity.toISOString()
+            lastActivity: botData.lastActivity.toISOString(),
+            hasConnectedBefore: botData.hasConnectedBefore,
+            connectionAttempts: 0,
+            lastError: null,
+            restorationAttempts: 0
           });
         } catch (error) {
           console.error(`Error updating bot ${id} in database:`, error);
@@ -1555,19 +1576,26 @@ export class BotManager {
       
       // Update database status
       try {
-        DatabaseService.updateBot(botId, {
+        this.updateBotInDatabase(botId, {
           status: 'initializing',
           isActive: false,
-          lastActivity: new Date().toISOString()
+          lastActivity: new Date().toISOString(),
+          lastError: 'Force restart initiated'
         });
       } catch (error) {
         console.error(`Error updating bot ${botId} restart in database:`, error);
       }
       
       // Wait a moment then restart
-      setTimeout(() => {
+      setTimeout(async () => {
         console.log(`Restarting bot ${botId} after force restart`);
-        this.createBot(botId);
+        // Get the bot config from database to restore properly
+        const botConfig = DatabaseService.getBotExtendedById(botId);
+        if (botConfig) {
+          await this.restoreBot(botConfig);
+        } else {
+          console.error(`Cannot restart bot ${botId}: configuration not found in extended database`);
+        }
       }, 2000);
       
       return true;
@@ -1661,6 +1689,21 @@ export class BotManager {
   emitBotUpdate(botId) {
     const bot = this.bots.get(botId);
     if (bot && bot.ownerId) {
+      // Update bot in database when emitting updates
+      this.updateBotInDatabase(botId, {
+        status: bot.status,
+        phoneNumber: bot.phoneNumber,
+        isActive: bot.isActive,
+        messageCount: bot.messageCount,
+        lastActivity: bot.lastActivity ? bot.lastActivity.toISOString() : null,
+        qrCode: bot.qrCode,
+        lastError: bot.error,
+        hasConnectedBefore: bot.hasConnectedBefore,
+        connectionAttempts: bot.connectionAttempts || 0,
+        restorationAttempts: bot.restorationAttempts || 0,
+        lastQrGenerated: bot.lastQRGenerated ? new Date(bot.lastQRGenerated).toISOString() : null
+      });
+      
       // Send update only to the bot owner
       this.io.to(bot.ownerId).emit('bot-updated', {
         id: bot.id,

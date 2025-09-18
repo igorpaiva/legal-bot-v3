@@ -361,6 +361,112 @@ class DatabaseService {
     return stmt.run(botId);
   }
 
+  // Extended Bot operations (new persistent system)
+  createBotExtended(botData) {
+    const stmt = this.db.prepare(`
+      INSERT INTO bots_extended (
+        id, name, assistant_name, owner_id, status, phone_number, is_active, 
+        message_count, last_activity, session_path, qr_code, connection_attempts,
+        last_error, has_connected_before, last_qr_generated, restoration_attempts
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    return stmt.run(
+      botData.id,
+      botData.name,
+      botData.assistantName || 'Ana',
+      botData.ownerId,
+      botData.status || 'initializing',
+      botData.phoneNumber || null,
+      botData.isActive !== false ? 1 : 0,
+      botData.messageCount || 0,
+      botData.lastActivity || null,
+      botData.sessionPath || null,
+      botData.qrCode || null,
+      botData.connectionAttempts || 0,
+      botData.lastError || null,
+      botData.hasConnectedBefore !== false ? 1 : 0,
+      botData.lastQrGenerated || null,
+      botData.restorationAttempts || 0
+    );
+  }
+
+  getBotExtendedById(id) {
+    const stmt = this.db.prepare('SELECT * FROM bots_extended WHERE id = ?');
+    const bot = stmt.get(id);
+    return bot ? this.formatBotExtended(bot) : null;
+  }
+
+  getBotExtendedsByOwner(ownerId) {
+    const stmt = this.db.prepare('SELECT * FROM bots_extended WHERE owner_id = ? ORDER BY created_at DESC');
+    return stmt.all(ownerId).map(bot => this.formatBotExtended(bot));
+  }
+
+  getAllBotsExtended() {
+    const stmt = this.db.prepare('SELECT * FROM bots_extended ORDER BY created_at DESC');
+    return stmt.all().map(bot => this.formatBotExtended(bot));
+  }
+
+  getActiveBotsExtended() {
+    const stmt = this.db.prepare('SELECT * FROM bots_extended WHERE is_active = 1 ORDER BY last_activity DESC');
+    return stmt.all().map(bot => this.formatBotExtended(bot));
+  }
+
+  updateBotExtended(botId, updates) {
+    // Convert boolean values to integers for SQLite
+    const sanitizedUpdates = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'boolean') {
+        sanitizedUpdates[key] = value ? 1 : 0;
+      } else {
+        sanitizedUpdates[key] = value;
+      }
+    }
+    
+    const setClause = Object.keys(sanitizedUpdates).map(key => `${this.camelToSnake(key)} = ?`).join(', ');
+    const values = Object.values(sanitizedUpdates);
+    
+    const stmt = this.db.prepare(`
+      UPDATE bots_extended 
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+    
+    return stmt.run(...values, botId);
+  }
+
+  deleteBotExtended(botId) {
+    const stmt = this.db.prepare('DELETE FROM bots_extended WHERE id = ?');
+    return stmt.run(botId);
+  }
+
+  // Helper method to format extended bot data
+  formatBotExtended(bot) {
+    if (!bot) return null;
+    
+    return {
+      id: bot.id,
+      name: bot.name,
+      assistantName: bot.assistant_name,
+      ownerId: bot.owner_id,
+      status: bot.status,
+      phoneNumber: bot.phone_number,
+      isActive: Boolean(bot.is_active),
+      messageCount: bot.message_count,
+      lastActivity: bot.last_activity,
+      createdAt: bot.created_at,
+      updatedAt: bot.updated_at,
+      sessionPath: bot.session_path,
+      qrCode: bot.qr_code,
+      connectionAttempts: bot.connection_attempts,
+      lastError: bot.last_error,
+      hasConnectedBefore: Boolean(bot.has_connected_before),
+      lastQrGenerated: bot.last_qr_generated,
+      restorationAttempts: bot.restoration_attempts
+    };
+  }
+
   // Lawyer operations
   createLawyer(lawyerData) {
     const stmt = this.db.prepare(`
