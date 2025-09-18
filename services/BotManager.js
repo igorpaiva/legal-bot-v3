@@ -49,8 +49,8 @@ export class BotManager {
       
       for (const config of botConfigs) {
         // Try to restore bots that were previously active, authenticated, or in initialization process
-        if (config.isActive || config.status === 'ready' || config.status === 'authenticated' || 
-            config.status === 'initializing' || config.status === 'waiting_for_scan') {
+        const allowedStatuses = ['ready', 'authenticated', 'initializing', 'waiting_for_scan', 'restoring'];
+        if (config.isActive || allowedStatuses.includes(config.status)) {
           console.log(`Restoring bot: ${config.name} (${config.id}) - Status: ${config.status}`);
           await this.restoreBot(config);
           
