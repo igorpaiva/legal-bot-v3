@@ -2,7 +2,7 @@ export interface Bot {
   id: string;
   name: string;
   assistantName?: string; // Add assistant name field
-  status: 'initializing' | 'waiting_for_scan' | 'authenticated' | 'connected' | 'disconnected' | 'auth_failed' | 'error' | 'stopped';
+  status: 'initializing' | 'waiting_for_scan' | 'authenticated' | 'connected' | 'ready' | 'disconnected' | 'auth_failed' | 'error' | 'stopped';
   phoneNumber?: string;
   isActive: boolean;
   messageCount: number;

@@ -372,6 +372,12 @@ function App() {
     });
 
     socket.on('bot-updated', (bot: Bot) => {
+      console.log('Bot updated via socket:', {
+        id: bot.id,
+        name: bot.name,
+        status: bot.status,
+        phoneNumber: bot.phoneNumber
+      });
       setState(prev => {
         const existingBotIndex = prev.bots.findIndex(b => b.id === bot.id);
         if (existingBotIndex >= 0) {
@@ -504,29 +510,39 @@ function App() {
       <Box sx={{ flexGrow: 1 }}>
         <AppBar position="static" className="fade-in-up">
           <Toolbar sx={{ py: 1, justifyContent: 'space-between' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <img 
+                src="/temis-icon-white.svg" 
+                alt="Temis Logo"
+                style={{ 
+                  height: '32px',
+                  width: 'auto'
+                }}
+              />
               <Typography 
                 variant="h5" 
                 component="div" 
                 sx={{ 
                   fontWeight: 700,
                   color: 'white',
-                  mr: 2,
                   fontSize: '1.8rem'
                 }}
               >
                 Temis
               </Typography>
-              <Typography 
-                variant="body2" 
-                sx={{ 
-                  color: 'rgba(255, 255, 255, 0.8)',
-                  fontWeight: 500
-                }}
-              >
-                {user?.role === 'admin' ? 'Administrador' : user?.lawOfficeName}
-              </Typography>
             </Box>
+            
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                color: 'rgba(255, 255, 255, 0.9)',
+                fontWeight: 500,
+                fontSize: '1.1rem',
+                mr: 2
+              }}
+            >
+              {user?.role === 'admin' ? 'Administrador' : user?.lawOfficeName}
+            </Typography>
             
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Typography 

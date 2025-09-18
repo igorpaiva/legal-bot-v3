@@ -23,7 +23,6 @@ import {
   IconButton,
   Tooltip,
   CircularProgress,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -268,21 +267,26 @@ const Reports: React.FC<ReportsProps> = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          📊 Relatórios Detalhados
-        </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={4} flexDirection={{ xs: 'column', sm: 'row' }} gap={{ xs: 3, sm: 2 }}>
         <Box>
+          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'primary.main' }}>
+            Relatórios e Análises
+          </Typography>
+          <Typography variant="body1" color="textSecondary" sx={{ lineHeight: 1.6 }}>
+            Acompanhe o desempenho dos atendimentos, analise tendências e exporte relatórios detalhados
+          </Typography>
+        </Box>
+        <Box display="flex" flexWrap="wrap" gap={1}>
           <Button
             variant={useMockData ? "contained" : "outlined"}
             onClick={() => setUseMockData(!useMockData)}
-            sx={{ mr: 1 }}
             color={useMockData ? "secondary" : "primary"}
+            size="small"
           >
             {useMockData ? "Dados Reais" : "Dados Demo"}
           </Button>
           <Tooltip title="Atualizar">
-            <IconButton onClick={loadConversations} color="primary">
+            <IconButton onClick={loadConversations} color="primary" size="small">
               <RefreshIcon />
             </IconButton>
           </Tooltip>
@@ -290,7 +294,7 @@ const Reports: React.FC<ReportsProps> = () => {
             variant="contained"
             startIcon={<GetAppIcon />}
             onClick={exportReport}
-            sx={{ ml: 1 }}
+            size="small"
           >
             Exportar CSV
           </Button>
@@ -298,8 +302,8 @@ const Reports: React.FC<ReportsProps> = () => {
             variant="outlined"
             startIcon={<PdfIcon />}
             onClick={() => exportToPDF()}
-            sx={{ ml: 1 }}
             color="error"
+            size="small"
           >
             Exportar PDF
           </Button>
@@ -333,35 +337,154 @@ const Reports: React.FC<ReportsProps> = () => {
       </Box>
 
       {/* Summary Cards */}
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr 1fr' }} gap={3} mb={4}>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Total de Conversas
-            </Typography>
-            <Typography variant="h4">
-              {filteredConversations.length}
-            </Typography>
+      <Box sx={{ 
+        display: 'grid',
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: 'repeat(2, 1fr)',
+          md: 'repeat(4, 1fr)'
+        },
+        gap: 2,
+        mb: 4
+      }}>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Total de Conversas
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#25D366' }}>
+                {filteredConversations.length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#25D366', 
+              fontSize: 36,
+              backgroundColor: '#25D36615',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              📊
+            </Box>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Em Andamento
-            </Typography>
-            <Typography variant="h4" color="warning.main">
-              {filteredConversations.filter(c => c.state !== 'COMPLETED').length}
-            </Typography>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Em Andamento
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#ff9800' }}>
+                {filteredConversations.filter(c => c.state !== 'COMPLETED').length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#ff9800', 
+              fontSize: 36,
+              backgroundColor: '#ff980015',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              ⏳
+            </Box>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Concluídas
-            </Typography>
-            <Typography variant="h4" color="success.main">
-              {filteredConversations.filter(c => c.state === 'COMPLETED').length}
-            </Typography>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Concluídas
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#4caf50' }}>
+                {filteredConversations.filter(c => c.state === 'COMPLETED').length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#4caf50', 
+              fontSize: 36,
+              backgroundColor: '#4caf5015',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              ✅
+            </Box>
+          </CardContent>
+        </Card>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Taxa de Conclusão
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#2196f3' }}>
+                {filteredConversations.length > 0 ? Math.round((filteredConversations.filter(c => c.state === 'COMPLETED').length / filteredConversations.length) * 100) : 0}%
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#2196f3', 
+              fontSize: 36,
+              backgroundColor: '#2196f315',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              📈
+            </Box>
           </CardContent>
         </Card>
       </Box>

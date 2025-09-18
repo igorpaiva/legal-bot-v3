@@ -270,13 +270,13 @@ const GoogleDriveSetup: React.FC = () => {
 
   return (
     <Box sx={{ maxWidth: 1200, margin: '0 auto', padding: 2 }}>
-      <Typography variant="h4" gutterBottom>
-        Google Drive Integration
+      <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'primary.main' }}>
+        Integração Google Drive
       </Typography>
       
-      <Typography variant="body1" color="text.secondary" paragraph>
-        Connect your law office's Google Drive to automatically store client documents and conversation reports.
-        Each client will get their own organized folder with all their documents and legal reports.
+      <Typography variant="body1" color="text.secondary" sx={{ mb: 4, lineHeight: 1.6 }}>
+        Conecte o Google Drive do seu escritório para armazenar automaticamente documentos dos clientes e relatórios de conversas.
+        Cada cliente terá sua própria pasta organizada com todos os documentos e relatórios jurídicos.
       </Typography>
 
       {loading && <LinearProgress sx={{ mb: 2 }} />}
@@ -294,22 +294,49 @@ const GoogleDriveSetup: React.FC = () => {
       )}
 
       {/* Connection Status Card */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ 
+        mb: 3,
+        transition: 'all 0.3s ease',
+        '&:hover': {
+          transform: 'translateY(-2px)',
+          boxShadow: 3
+        }
+      }}>
         <CardContent>
           <Box display="flex" alignItems="center" justifyContent="space-between">
             <Box display="flex" alignItems="center">
               {connected ? (
-                <CheckCircleIcon color="success" sx={{ mr: 2 }} />
+                <Box sx={{ 
+                  bgcolor: '#25D36615',
+                  borderRadius: '50%',
+                  p: 1.5,
+                  mr: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <CheckCircleIcon sx={{ color: '#25D366', fontSize: 32 }} />
+                </Box>
               ) : (
-                <ErrorIcon color="error" sx={{ mr: 2 }} />
+                <Box sx={{ 
+                  bgcolor: '#f4433615',
+                  borderRadius: '50%',
+                  p: 1.5,
+                  mr: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <ErrorIcon sx={{ color: '#f44336', fontSize: 32 }} />
+                </Box>
               )}
               <Box>
-                <Typography variant="h6">
-                  Google Drive {connected ? 'Connected' : 'Not Connected'}
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  Google Drive {connected ? 'Conectado' : 'Não Conectado'}
                 </Typography>
                 {connected && userEmail && (
                   <Typography variant="body2" color="text.secondary">
-                    Connected as: {userEmail}
+                    Conectado como: {userEmail}
                   </Typography>
                 )}
               </Box>
@@ -352,42 +379,76 @@ const GoogleDriveSetup: React.FC = () => {
 
       {/* Statistics */}
       {connected && stats && (
-        <Card sx={{ mb: 3 }}>
+        <Card sx={{ 
+          mb: 3,
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Document Statistics
+            <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+              Estatísticas de Documentos
             </Typography>
-            <Box display="flex" gap={3} flexWrap="wrap">
-              <Box>
-                <Typography variant="h4" color="primary">
+            <Box sx={{ 
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: 'repeat(2, 1fr)',
+                sm: 'repeat(4, 1fr)'
+              },
+              gap: 2
+            }}>
+              <Box sx={{ 
+                textAlign: 'center',
+                p: 2,
+                borderRadius: 2,
+                backgroundColor: '#25D36608'
+              }}>
+                <Typography variant="h4" sx={{ fontWeight: 700, color: '#25D366' }}>
                   {stats.overall?.total_documents || 0}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Total Documents
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  Total de Documentos
                 </Typography>
               </Box>
-              <Box>
-                <Typography variant="h4" color="success.main">
+              <Box sx={{ 
+                textAlign: 'center',
+                p: 2,
+                borderRadius: 2,
+                backgroundColor: '#4caf5008'
+              }}>
+                <Typography variant="h4" sx={{ fontWeight: 700, color: '#4caf50' }}>
                   {stats.overall?.successful_uploads || 0}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Successful Uploads
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  Uploads Bem-sucedidos
                 </Typography>
               </Box>
-              <Box>
-                <Typography variant="h4" color="info.main">
+              <Box sx={{ 
+                textAlign: 'center',
+                p: 2,
+                borderRadius: 2,
+                backgroundColor: '#2196f308'
+              }}>
+                <Typography variant="h4" sx={{ fontWeight: 700, color: '#2196f3' }}>
                   {stats.overall?.unique_clients || 0}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Client Folders
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  Pastas de Clientes
                 </Typography>
               </Box>
-              <Box>
-                <Typography variant="h4" color="text.primary">
+              <Box sx={{ 
+                textAlign: 'center',
+                p: 2,
+                borderRadius: 2,
+                backgroundColor: '#ff980008'
+              }}>
+                <Typography variant="h4" sx={{ fontWeight: 700, color: '#ff9800' }}>
                   {formatFileSize(stats.overall?.total_size || 0)}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Total Size
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  Tamanho Total
                 </Typography>
               </Box>
             </Box>
@@ -397,26 +458,51 @@ const GoogleDriveSetup: React.FC = () => {
 
       {/* Client Folders */}
       {connected && folders.length > 0 && (
-        <Card>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Client Folders ({folders.length})
+            <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+              Pastas dos Clientes ({folders.length})
             </Typography>
             <List>
               {folders.slice(0, 10).map((folder) => (
-                <ListItem key={folder.id} divider>
+                <ListItem key={folder.id} divider sx={{ 
+                  borderRadius: 1,
+                  mb: 1,
+                  '&:hover': {
+                    backgroundColor: 'action.hover'
+                  }
+                }}>
                   <ListItemIcon>
-                    <FolderIcon color="primary" />
+                    <Box sx={{ 
+                      bgcolor: '#2196f315',
+                      borderRadius: '50%',
+                      p: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <FolderIcon sx={{ color: '#2196f3' }} />
+                    </Box>
                   </ListItemIcon>
                   <ListItemText
-                    primary={folder.folder_name}
+                    primary={
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {folder.folder_name}
+                      </Typography>
+                    }
                     secondary={
                       <Box>
-                        <Typography variant="body2" component="span">
-                          {folder.client_phone} • {folder.document_count || 0} documents
+                        <Typography variant="body2" component="span" color="text.secondary">
+                          {folder.client_phone} • {folder.document_count || 0} documentos
                         </Typography>
                         {folder.total_size && (
-                          <Typography variant="body2" component="span" sx={{ ml: 1 }}>
+                          <Typography variant="body2" component="span" sx={{ ml: 1 }} color="text.secondary">
                             • {formatFileSize(folder.total_size)}
                           </Typography>
                         )}

@@ -74,6 +74,8 @@ const Lawyers: React.FC = () => {
   const [lawyers, setLawyers] = useState<Lawyer[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [lawyerToDelete, setLawyerToDelete] = useState<Lawyer | null>(null);
   const [editingLawyer, setEditingLawyer] = useState<Lawyer | null>(null);
   const [formData, setFormData] = useState<LawyerFormData>({
     name: '',
@@ -200,16 +202,24 @@ const Lawyers: React.FC = () => {
     }
   };
 
-  const handleDelete = async (lawyer: Lawyer) => {
-    if (!confirm(`Tem certeza que deseja excluir o advogado ${lawyer.name}?`)) return;
+  const handleDelete = (lawyer: Lawyer) => {
+    setLawyerToDelete(lawyer);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!lawyerToDelete) return;
 
     try {
-      await api.delete(`/lawyers/${lawyer.id}`);
+      await api.delete(`/lawyers/${lawyerToDelete.id}`);
       setAlert({ type: 'success', message: 'Advogado excluído com sucesso' });
       loadLawyers();
     } catch (error) {
       console.error('Error deleting lawyer:', error);
       setAlert({ type: 'error', message: 'Erro ao excluir advogado' });
+    } finally {
+      setDeleteDialogOpen(false);
+      setLawyerToDelete(null);
     }
   };
 
@@ -260,15 +270,26 @@ const Lawyers: React.FC = () => {
 
   return (
     <Box p={3}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          👨‍⚖️ Gestão de Advogados
-        </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={4} flexDirection={{ xs: 'column', sm: 'row' }} gap={{ xs: 3, sm: 2 }}>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'primary.main' }}>
+            Gestão de Advogados
+          </Typography>
+          <Typography variant="body1" color="textSecondary" sx={{ lineHeight: 1.6 }}>
+            Gerencie a equipe de advogados, suas especialidades e disponibilidade para atendimento
+          </Typography>
+        </Box>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           size="large"
+          sx={{ 
+            minWidth: { xs: '100%', sm: 'auto' },
+            py: 1.5,
+            px: 3,
+            fontWeight: 600
+          }}
         >
           Novo Advogado
         </Button>
@@ -285,56 +306,173 @@ const Lawyers: React.FC = () => {
       )}
 
       {/* Statistics Cards */}
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr 1fr' }} gap={3} sx={{ mb: 4 }}>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Total de Advogados
-            </Typography>
-            <Typography variant="h4">
-              {lawyers.length}
-            </Typography>
+      <Box sx={{ 
+        display: 'grid',
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: 'repeat(2, 1fr)',
+          md: 'repeat(4, 1fr)'
+        },
+        gap: 2,
+        mb: 4
+      }}>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Total de Advogados
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#25D366' }}>
+                {lawyers.length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#25D366', 
+              fontSize: 36,
+              backgroundColor: '#25D36615',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              👨‍⚖️
+            </Box>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Advogados Ativos
-            </Typography>
-            <Typography variant="h4" color="success.main">
-              {lawyers.filter(l => l.isActive).length}
-            </Typography>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Advogados Ativos
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#4caf50' }}>
+                {lawyers.filter(l => l.isActive).length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#4caf50', 
+              fontSize: 36,
+              backgroundColor: '#4caf5015',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              ✅
+            </Box>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Especialidades Cobertas
-            </Typography>
-            <Typography variant="h4" color="primary">
-              {getSpecialtyStats().length}
-            </Typography>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Especialidades Cobertas
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#2196f3' }}>
+                {getSpecialtyStats().length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#2196f3', 
+              fontSize: 36,
+              backgroundColor: '#2196f315',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              📚
+            </Box>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent>
-            <Typography color="textSecondary" gutterBottom>
-              Advogados Inativos
-            </Typography>
-            <Typography variant="h4" color="warning.main">
-              {lawyers.filter(l => !l.isActive).length}
-            </Typography>
+        <Card sx={{ 
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <CardContent sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            py: 2
+          }}>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+                Advogados Inativos
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: '#ff9800' }}>
+                {lawyers.filter(l => !l.isActive).length}
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              color: '#ff9800', 
+              fontSize: 36,
+              backgroundColor: '#ff980015',
+              borderRadius: '50%',
+              p: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              ⏸️
+            </Box>
           </CardContent>
         </Card>
       </Box>
 
       {/* Specialty Coverage */}
       {getSpecialtyStats().length > 0 && (
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            📊 Cobertura por Especialidade
+        <Paper sx={{ 
+          p: 3, 
+          mb: 3,
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 3
+          }
+        }}>
+          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+            Cobertura por Especialidade
           </Typography>
-          <Box display="flex" flexWrap="wrap" gap={1}>
+          <Box display="flex" flexWrap="wrap" gap={1.5}>
             {getSpecialtyStats().map(stat => (
               <Chip
                 key={stat.field}
@@ -495,6 +633,30 @@ const Lawyers: React.FC = () => {
           </Button>
           <Button onClick={handleSubmit} variant="contained" startIcon={<SaveIcon />}>
             {editingLawyer ? 'Atualizar' : 'Cadastrar'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog 
+        open={deleteDialogOpen} 
+        onClose={() => setDeleteDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Confirmar Exclusão</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Tem certeza que deseja excluir o advogado <strong>{lawyerToDelete?.name}</strong>?
+            Esta ação não pode ser desfeita.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={confirmDelete} variant="contained" color="error">
+            Excluir
           </Button>
         </DialogActions>
       </Dialog>

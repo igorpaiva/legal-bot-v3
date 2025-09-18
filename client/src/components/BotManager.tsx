@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -58,25 +58,46 @@ interface StatsCardProps {
 }
 
 const StatsCard: React.FC<StatsCardProps> = ({ title, value, icon, color, subtitle }) => (
-  <Card sx={{ minWidth: { xs: '100%', sm: 275 }, m: 1, width: { xs: '100%', sm: 'auto' } }}>
-    <CardContent>
-      <Box display="flex" alignItems="center" justifyContent="space-between">
-        <Box>
-          <Typography color="textSecondary" gutterBottom variant="h6">
-            {title}
+  <Card sx={{ 
+    minWidth: { xs: '100%', sm: 240 }, 
+    maxWidth: { xs: '100%', sm: 280 },
+    m: 1, 
+    transition: 'all 0.3s ease',
+    '&:hover': {
+      transform: 'translateY(-2px)',
+      boxShadow: 2
+    }
+  }}>
+    <CardContent sx={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'space-between',
+      py: 2
+    }}>
+      <Box sx={{ flexGrow: 1 }}>
+        <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontWeight: 500 }}>
+          {title}
+        </Typography>
+        <Typography variant="h4" component="h2" sx={{ fontWeight: 700, mb: 0.5 }}>
+          {value}
+        </Typography>
+        {subtitle && (
+          <Typography color="textSecondary" variant="body2" sx={{ fontSize: '0.8rem' }}>
+            {subtitle}
           </Typography>
-          <Typography variant="h4" component="h2">
-            {value}
-          </Typography>
-          {subtitle && (
-            <Typography color="textSecondary" variant="body2">
-              {subtitle}
-            </Typography>
-          )}
-        </Box>
-        <Box sx={{ color, fontSize: 40 }}>
-          {icon}
-        </Box>
+        )}
+      </Box>
+      <Box sx={{ 
+        color, 
+        fontSize: 36,
+        backgroundColor: `${color}15`,
+        borderRadius: '50%',
+        p: 1.5,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        {icon}
       </Box>
     </CardContent>
   </Card>
@@ -150,16 +171,34 @@ const BotCard: React.FC<{
   };
 
   return (
-    <Card sx={{ minWidth: { xs: '100%', sm: 300 }, m: 1, maxWidth: '100%' }}>
-      <CardContent>
+    <Card sx={{ 
+      minWidth: { xs: '100%', sm: 320 }, 
+      maxWidth: { xs: '100%', sm: 400 },
+      m: 1, 
+      height: 'fit-content',
+      transition: 'all 0.3s ease',
+      '&:hover': {
+        transform: 'translateY(-4px)',
+        boxShadow: 3
+      }
+    }}>
+      <CardContent sx={{ pb: 1 }}>
+        {/* Header with Status */}
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-          <Avatar sx={{ mr: 2, bgcolor: getStatusColor(bot.status) === 'success' ? '#25D366' : '#ccc' }}>
+          <Avatar sx={{ 
+            mr: 2, 
+            bgcolor: getStatusColor(bot.status) === 'success' ? '#25D366' : '#ccc',
+            width: 48,
+            height: 48
+          }}>
             {getStatusIcon(bot.status)}
           </Avatar>
-          <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="h6">{bot.name}</Typography>
+          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }} noWrap>
+              {bot.name}
+            </Typography>
             {bot.assistantName && (
-              <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+              <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic', mb: 0.5 }} noWrap>
                 Assistente: {bot.assistantName}
               </Typography>
             )}
@@ -167,71 +206,140 @@ const BotCard: React.FC<{
               label={bot.status.replace(/_/g, ' ')} 
               color={getStatusColor(bot.status)} 
               size="small"
+              sx={{ fontWeight: 500 }}
             />
           </Box>
         </Box>
 
-        {bot.phoneNumber && (
-          <Typography variant="body2" color="textSecondary">
-            📱 {bot.phoneNumber}
-          </Typography>
-        )}
+        {/* Bot Information */}
+        <Box sx={{ mb: 2 }}>
+          {bot.phoneNumber && (
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <PhoneAndroid sx={{ mr: 1, fontSize: 16, color: 'text.secondary' }} />
+              <Typography variant="body2" color="textSecondary">
+                {bot.phoneNumber}
+              </Typography>
+            </Box>
+          )}
 
-        <Typography variant="body2" color="textSecondary">
-          💬 {bot.messageCount} mensagens
-        </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+            <Message sx={{ mr: 1, fontSize: 16, color: 'text.secondary' }} />
+            <Typography variant="body2" color="textSecondary">
+              {bot.messageCount} mensagens processadas
+            </Typography>
+          </Box>
 
-        {bot.lastActivity && (
-          <Typography variant="body2" color="textSecondary">
-            🕒 Última atividade: {formatDate(bot.lastActivity)}
-          </Typography>
-        )}
+          {bot.lastActivity && (
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <Schedule sx={{ mr: 1, fontSize: 16, color: 'text.secondary' }} />
+              <Typography variant="body2" color="textSecondary" noWrap>
+                Última atividade: {formatDate(bot.lastActivity)}
+              </Typography>
+            </Box>
+          )}
 
-        <Typography variant="body2" color="textSecondary">
-          📅 Criado em: {formatDate(bot.createdAt)}
-        </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Schedule sx={{ mr: 1, fontSize: 16, color: 'text.secondary' }} />
+            <Typography variant="body2" color="textSecondary" noWrap>
+              Criado em: {formatDate(bot.createdAt)}
+            </Typography>
+          </Box>
+        </Box>
 
         {bot.error && (
-          <Alert severity="error" sx={{ mt: 1 }}>
+          <Alert severity="error" sx={{ mt: 1, fontSize: '0.875rem' }}>
             {bot.error}
           </Alert>
         )}
       </CardContent>
 
-      <CardActions>
+      <CardActions sx={{ 
+        justifyContent: 'space-between', 
+        px: 2, 
+        py: 1.5,
+        borderTop: 1,
+        borderColor: 'divider',
+        backgroundColor: 'grey.50'
+      }}>
+        {/* QR Code Button */}
         {bot.status === 'waiting_for_scan' && bot.qrCode && (
-          <Tooltip title="Mostrar QR Code">
-            <IconButton onClick={() => onShowQR(bot)} color="primary">
-              <QrCode />
-            </IconButton>
+          <Tooltip title="Mostrar QR Code para conectar">
+            <Button 
+              onClick={() => onShowQR(bot)} 
+              color="primary"
+              variant="outlined"
+              size="small"
+              startIcon={<QrCode />}
+            >
+              QR Code
+            </Button>
           </Tooltip>
         )}
         
-        {bot.isActive ? (
-          <Tooltip title="Parar Bot">
-            <IconButton onClick={() => onAction('stop', bot.id)} color="error">
-              <Stop />
+        {/* Action Buttons */}
+        <Box sx={{ display: 'flex', gap: 1, ml: 'auto' }}>
+          {bot.isActive ? (
+            <Tooltip title="Parar Bot">
+              <IconButton 
+                onClick={() => onAction('stop', bot.id)} 
+                color="error"
+                size="small"
+                sx={{ 
+                  bgcolor: 'error.light',
+                  color: 'white',
+                  '&:hover': { bgcolor: 'error.main' }
+                }}
+              >
+                <Stop />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <Tooltip title="Iniciar Bot">
+              <IconButton 
+                onClick={() => onAction('restart', bot.id)} 
+                color="success"
+                size="small"
+                sx={{ 
+                  bgcolor: 'success.light',
+                  color: 'white',
+                  '&:hover': { bgcolor: 'success.main' }
+                }}
+              >
+                <PlayArrow />
+              </IconButton>
+            </Tooltip>
+          )}
+
+          <Tooltip title="Reiniciar Bot">
+            <IconButton 
+              onClick={() => onAction('restart', bot.id)} 
+              color="warning"
+              size="small"
+              sx={{ 
+                bgcolor: 'warning.light',
+                color: 'white',
+                '&:hover': { bgcolor: 'warning.main' }
+              }}
+            >
+              <RestartAlt />
             </IconButton>
           </Tooltip>
-        ) : (
-          <Tooltip title="Iniciar Bot">
-            <IconButton onClick={() => onAction('restart', bot.id)} color="success">
-              <PlayArrow />
+
+          <Tooltip title="Excluir Bot">
+            <IconButton 
+              onClick={() => onAction('delete', bot.id)} 
+              color="error"
+              size="small"
+              sx={{ 
+                bgcolor: 'error.light',
+                color: 'white',
+                '&:hover': { bgcolor: 'error.main' }
+              }}
+            >
+              <Delete />
             </IconButton>
           </Tooltip>
-        )}
-
-        <Tooltip title="Reiniciar Bot">
-          <IconButton onClick={() => onAction('restart', bot.id)} color="warning">
-            <RestartAlt />
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip title="Excluir Bot">
-          <IconButton onClick={() => onAction('delete', bot.id)} color="error">
-            <Delete />
-          </IconButton>
-        </Tooltip>
+        </Box>
       </CardActions>
     </Card>
   );
@@ -249,6 +357,31 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
   const activeBots = bots.filter(bot => bot.isActive).length;
   const totalMessages = bots.reduce((sum, bot) => sum + bot.messageCount, 0);
   const connectedBots = bots.filter(bot => bot.status === 'connected').length;
+
+  // Auto-close QR dialog when bot connects
+  useEffect(() => {
+    if (selectedBot && qrDialogOpen) {
+      // Find the updated bot data
+      const updatedBot = bots.find(bot => bot.id === selectedBot.id);
+      console.log('QR Dialog Check:', {
+        selectedBotId: selectedBot.id,
+        updatedBot: updatedBot ? {
+          id: updatedBot.id,
+          name: updatedBot.name,
+          status: updatedBot.status
+        } : null,
+        shouldClose: updatedBot && (updatedBot.status === 'ready' || updatedBot.status === 'connected' || updatedBot.status === 'authenticated')
+      });
+      
+      // Check for 'ready', 'connected' or 'authenticated' status - backend uses 'ready' for connected bots
+      if (updatedBot && (updatedBot.status === 'ready' || updatedBot.status === 'connected' || updatedBot.status === 'authenticated')) {
+        console.log('Closing QR dialog - bot connected!');
+        setQrDialogOpen(false);
+        setSelectedBot(null);
+        onNotification(`Bot ${updatedBot.name} conectado com sucesso!`, 'success');
+      }
+    }
+  }, [bots, selectedBot, qrDialogOpen, onNotification]);
 
   const handleCreateBot = async () => {
     if (!newBotName.trim()) return;
@@ -316,13 +449,22 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 2, sm: 0 } }}>
-        <Box>
-          <Typography variant="h4">
-            Gerenciar Bots
+      {/* Header */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'flex-start', 
+        mb: 4, 
+        flexDirection: { xs: 'column', sm: 'row' }, 
+        gap: { xs: 3, sm: 2 }
+      }}>
+        <Box sx={{ maxWidth: { xs: '100%', sm: '60%' } }}>
+          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'primary.main' }}>
+            Gerenciar Bots WhatsApp
           </Typography>
-          <Typography variant="body1" color="textSecondary">
-            Gerencie seus bots do WhatsApp e monitore as estatísticas
+          <Typography variant="body1" color="textSecondary" sx={{ lineHeight: 1.6 }}>
+            Gerencie seus bots de atendimento automatizado, monitore estatísticas em tempo real 
+            e acompanhe o desempenho da sua automação jurídica.
           </Typography>
         </Box>
         
@@ -331,13 +473,29 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
           startIcon={<Add />}
           onClick={() => setCreateDialogOpen(true)}
           disabled={loading || (user?.role === 'law_office' && (user.botCredits || 0) <= bots.length)}
+          size="large"
+          sx={{ 
+            minWidth: { xs: '100%', sm: 'auto' },
+            py: 1.5,
+            px: 3,
+            fontWeight: 600
+          }}
         >
           Criar Novo Bot
         </Button>
       </Box>
 
       {/* Statistics Cards */}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: { xs: 'center', sm: 'space-around' }, gap: 1, mb: 4 }}>
+      <Box sx={{ 
+        display: 'grid',
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: 'repeat(auto-fit, minmax(240px, 1fr))',
+        },
+        gap: 2,
+        mb: 4,
+        maxWidth: '100%'
+      }}>
         <StatsCard
           title="Total de Bots"
           value={bots.length}
@@ -346,15 +504,15 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
         />
         
         <StatsCard
-          title="Bots Ativos"
-          value={activeBots}
+          title="Bots Conectados"
+          value={connectedBots}
           icon={<PhoneAndroid />}
           color="#128C7E"
-          subtitle={`${connectedBots} conectados`}
+          subtitle={`${activeBots} ativos`}
         />
         
         <StatsCard
-          title="Total de Mensagens"
+          title="Mensagens Processadas"
           value={totalMessages.toLocaleString()}
           icon={<Message />}
           color="#075E54"
@@ -362,11 +520,11 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
 
         {user?.role === 'law_office' && (
           <StatsCard
-            title="Créditos de Bot"
-            value={user.botCredits || 0}
+            title="Créditos Disponíveis"
+            value={(user.botCredits || 0) - bots.length}
             icon={<SmartToy />}
             color="#FF6B35"
-            subtitle={`${bots.length} em uso`}
+            subtitle={`${bots.length} em uso de ${user.botCredits || 0}`}
           />
         )}
       </Box>
@@ -388,18 +546,53 @@ const BotManager: React.FC<BotManagerProps> = ({ bots, onNotification, onUserDat
         </>
       )}
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+      {/* Bots Grid */}
+      <Box sx={{ 
+        display: 'grid',
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: 'repeat(auto-fill, minmax(320px, 1fr))',
+          lg: 'repeat(auto-fill, minmax(350px, 1fr))'
+        },
+        gap: 3,
+        mt: 2
+      }}>
         {bots.length === 0 ? (
-          <Card sx={{ minWidth: { xs: '100%', sm: 300 }, m: 1, maxWidth: '100%' }}>
-            <CardContent>
-              <Typography variant="h6" align="center" color="textSecondary">
-                Nenhum bot criado ainda
-              </Typography>
-              <Typography variant="body2" align="center" color="textSecondary">
-                Clique em "Criar Novo Bot" para começar
-              </Typography>
-            </CardContent>
-          </Card>
+          <Box sx={{ 
+            gridColumn: '1 / -1',
+            display: 'flex',
+            justifyContent: 'center'
+          }}>
+            <Card sx={{ 
+              minWidth: { xs: '100%', sm: 400 }, 
+              maxWidth: 500,
+              textAlign: 'center',
+              py: 4
+            }}>
+              <CardContent>
+                <SmartToy sx={{ 
+                  fontSize: 64, 
+                  color: 'text.secondary', 
+                  mb: 2 
+                }} />
+                <Typography variant="h6" color="textSecondary" gutterBottom>
+                  Nenhum bot criado ainda
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
+                  Comece criando seu primeiro bot WhatsApp para automatizar o atendimento jurídico
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<Add />}
+                  onClick={() => setCreateDialogOpen(true)}
+                  disabled={loading || (user?.role === 'law_office' && (user.botCredits || 0) <= bots.length)}
+                  size="large"
+                >
+                  Criar Primeiro Bot
+                </Button>
+              </CardContent>
+            </Card>
+          </Box>
         ) : (
           bots.map(bot => (
             <BotCard
