@@ -221,6 +221,23 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </CardContent>
       </Card>
 
+      {/* Footer com logo v3 Soluções e copyright */}
+      <Box sx={{ mt: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <img 
+            src="/logo.svg" 
+            alt="v3 Soluções Logo" 
+            style={{ height: '24px', width: 'auto' }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            Soluções
+          </Typography>
+        </Box>
+        <Typography variant="caption" color="text.secondary" align="center">
+          Todos os direitos reservados © 2025
+        </Typography>
+      </Box>
+
       {/* First Login Password Setup Dialog */}
       <Dialog open={!!firstLoginData} onClose={handleClosePasswordSetup} maxWidth="sm" fullWidth>
         <DialogTitle>
