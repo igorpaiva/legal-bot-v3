@@ -64,9 +64,14 @@ export function requireAdmin(req, res, next) {
 
 // Law office-only middleware
 export function requireLawOffice(req, res, next) {
+  console.log('[requireLawOffice] Checking access - User:', req.user ? { id: req.user.id, email: req.user.email, role: req.user.role } : 'No user');
+  
   if (!req.user || req.user.role !== 'law_office') {
+    console.log('[requireLawOffice] Access denied - User role:', req.user?.role || 'No user');
     return res.status(403).json({ error: 'Law office access required' });
   }
+  
+  console.log('[requireLawOffice] Access granted');
   next();
 }
 

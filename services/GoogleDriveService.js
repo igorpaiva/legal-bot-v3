@@ -87,6 +87,8 @@ class GoogleDriveService {
       const tokenPath = this.getTokenPath();
       const configDir = path.dirname(tokenPath);
       
+      console.log(`[DEBUG] Saving tokens for userId: "${this.userId}", path: "${tokenPath}"`);
+      
       // Ensure config directory exists
       await fs.mkdir(configDir, { recursive: true });
       
@@ -207,6 +209,9 @@ class GoogleDriveService {
    * Create or get the main "Clientes Legal Bot" folder
    */
   async ensureRootFolder() {
+    // Ensure service is initialized
+    await this.initialize();
+    
     if (this.rootFolderId) {
       return this.rootFolderId;
     }
@@ -363,6 +368,13 @@ class GoogleDriveService {
    */
   async getStorageInfo() {
     try {
+      // Ensure service is initialized and drive is available
+      await this.initialize();
+      
+      if (!this.drive) {
+        throw new Error('Google Drive service not properly initialized');
+      }
+
       const response = await this.drive.about.get({
         fields: 'storageQuota,user'
       });

@@ -4,6 +4,7 @@ import { google } from 'googleapis';
 import GoogleDriveService from '../services/GoogleDriveService.js';
 
 const router = express.Router();
+const publicRouter = express.Router(); // For routes that don't need authentication
 
 // Configure multer for file uploads
 const upload = multer({ 
@@ -48,9 +49,9 @@ router.get('/auth-url', async (req, res) => {
 });
 
 /**
- * Handle OAuth callback
+ * Handle OAuth callback (matches the redirect URI in .env)
  */
-router.get('/oauth/callback', async (req, res) => {
+publicRouter.get('/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
 
@@ -78,8 +79,76 @@ router.get('/oauth/callback', async (req, res) => {
     // Get user ID from state parameter
     const userId = state && state !== 'global' ? state : null;
     
-    // Create user-specific Google Drive service
+    // Create user-specific Google Drive service and initialize it
     const userGoogleDriveService = new GoogleDriveService(userId);
+    await userGoogleDriveService.initialize();
+    await userGoogleDriveService.setCredentials(tokens);
+
+    console.log(`Google Drive tokens saved successfully for user ${userId || 'global'}`);
+
+    // Show success page
+    res.send(`
+      <html>
+        <body>
+          <h1>Google Drive Authentication Successful!</h1>
+          <p>Your Google Drive has been connected successfully.</p>
+          <p><a href="/admin">Back to Admin Panel</a></p>
+          <script>
+            setTimeout(() => {
+              window.close();
+            }, 3000);
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Error in OAuth callback:', error);
+    res.status(500).send(`
+      <html>
+        <body>
+          <h1>Google Drive Authentication Error</h1>
+          <p>Error: ${error.message}</p>
+          <p><a href="/admin">Back to Admin Panel</a></p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+/**
+ * Handle OAuth callback (legacy route for backward compatibility)
+ */
+publicRouter.get('/oauth/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+
+    if (!code) {
+      return res.status(400).send(`
+        <html>
+          <body>
+            <h1>Google Drive Authentication Error</h1>
+            <p>No authorization code provided</p>
+            <p><a href="/admin">Back to Admin Panel</a></p>
+          </body>
+        </html>
+      `);
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    // Get user ID from state parameter
+    const userId = state && state !== 'global' ? state : null;
+    
+    // Create user-specific Google Drive service and initialize it
+    const userGoogleDriveService = new GoogleDriveService(userId);
+    await userGoogleDriveService.initialize();
     await userGoogleDriveService.setCredentials(tokens);
 
     console.log(`Google Drive tokens saved successfully for user ${userId || 'global'}`);
@@ -118,6 +187,16 @@ router.get('/oauth/callback', async (req, res) => {
  */
 router.get('/auth-status', async (req, res) => {
   try {
+    console.log('[GoogleDrive] Auth status check - User:', req.user ? { id: req.user.id, email: req.user.email, role: req.user.role } : 'No user');
+    
+    if (!req.user || !req.user.id) {
+      console.log('[GoogleDrive] No authenticated user found');
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
+      });
+    }
+    
     const userGoogleDriveService = new GoogleDriveService(req.user.id);
     const status = await userGoogleDriveService.checkAuthentication();
     
@@ -142,6 +221,7 @@ router.get('/auth-status', async (req, res) => {
 router.get('/storage-info', async (req, res) => {
   try {
     const userGoogleDriveService = new GoogleDriveService(req.user.id);
+    await userGoogleDriveService.initialize();
     const storageInfo = await userGoogleDriveService.getStorageInfo();
     
     res.json({
@@ -262,3 +342,4 @@ router.post('/ensure-client-folder', async (req, res) => {
 });
 
 export default router;
+export { publicRouter };

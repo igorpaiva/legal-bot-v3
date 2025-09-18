@@ -14,7 +14,7 @@ import pdfRoutes from './routes/pdf.js';
 import lawyersRoutes from './routes/lawyers.js';
 import authRoutes from './routes/auth.js';
 import monitoringRoutes from './routes/monitoring.js';
-import googleDriveRoutes from './routes/googleDrive.js';
+import googleDriveRoutes, { publicRouter as googleDrivePublicRoutes } from './routes/googleDrive.js';
 import { BotManager } from './services/BotManager.js';
 import UserService from './services/UserService.js';
 import DatabaseService from './services/DatabaseService.js';
@@ -60,6 +60,10 @@ async function initializeApplication() {
     // Register routes after database initialization
     app.use('/api/pdf', pdfRoutes);
     app.use('/api/auth', authRoutes);
+    
+    // Google Drive public routes (no authentication required)
+    app.use('/api/google-drive', googleDrivePublicRoutes);
+    
     app.use('/api/bot', authenticateUser, botRoutes);
     app.use('/api/admin', authenticateUser, adminRoutes);
     app.use('/api/lawyers', authenticateUser, requireLawOffice, lawyersRoutes);

@@ -32,7 +32,13 @@ const GoogleDrive: React.FC = () => {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch('/api/google-drive/auth-status');
+      const token = localStorage.getItem('authToken');
+      const response = await fetch('/api/google-drive/auth-status', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       const data = await response.json();
       
       if (data.success) {
@@ -59,7 +65,13 @@ const GoogleDrive: React.FC = () => {
 
   const fetchGoogleDriveInfo = async () => {
     try {
-      const response = await fetch('/api/google-drive/storage-info');
+      const token = localStorage.getItem('authToken');
+      const response = await fetch('/api/google-drive/storage-info', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       const data = await response.json();
       
       if (data.success) {
@@ -73,7 +85,13 @@ const GoogleDrive: React.FC = () => {
   const handleConnect = async () => {
     setConnecting(true);
     try {
-      const response = await fetch('/api/google-drive/auth-url');
+      const token = localStorage.getItem('authToken');
+      const response = await fetch('/api/google-drive/auth-url', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       const data = await response.json();
       
       if (data.success && data.authUrl) {
@@ -86,13 +104,33 @@ const GoogleDrive: React.FC = () => {
 
         // Check if window is closed and refresh status
         const checkClosed = setInterval(() => {
-          if (authWindow?.closed) {
+          try {
+            if (authWindow?.closed) {
+              clearInterval(checkClosed);
+              setConnecting(false);
+              // Wait a moment then check auth status
+              setTimeout(() => {
+                checkAuthStatus();
+              }, 1000);
+            }
+          } catch (error) {
+            // Handle Cross-Origin-Opener-Policy errors
+            console.warn('Cannot check window status due to browser security policy');
+            // Fall back to polling for auth status
             clearInterval(checkClosed);
-            setConnecting(false);
-            // Wait a moment then check auth status
+            const pollAuth = setInterval(async () => {
+              await checkAuthStatus();
+              if (authStatus?.authenticated) {
+                clearInterval(pollAuth);
+                setConnecting(false);
+              }
+            }, 2000);
+            
+            // Stop polling after 60 seconds
             setTimeout(() => {
-              checkAuthStatus();
-            }, 1000);
+              clearInterval(pollAuth);
+              setConnecting(false);
+            }, 60000);
           }
         }, 1000);
       }
