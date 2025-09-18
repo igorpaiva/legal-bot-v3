@@ -80,7 +80,7 @@ router.get('/conversation/:conversationId', async (req, res) => {
     }
     
     // Verificar permissões - usuários law_office só podem acessar suas próprias conversas
-    if (req.user.role === 'law_office') {
+    if (req.user && req.user.role === 'law_office') {
       // Para conversas em memória
       if (conversation && conversation.ownerId && conversation.ownerId !== req.user.id) {
         return res.status(403).json({ error: 'Access denied' });

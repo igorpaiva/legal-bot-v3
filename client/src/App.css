@@ -69,7 +69,7 @@
 
 /* Gradient text */
 .gradient-text {
-  color: #1976d2;
+  color: #22577A;
 }
 
 /* Hover effects */
@@ -111,12 +111,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1976d2;
+  background: #22577A;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #1976d2;
+  background: #22577A;
 }
 
 /* Mobile Responsiveness */

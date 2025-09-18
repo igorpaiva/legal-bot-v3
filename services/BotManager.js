@@ -183,16 +183,47 @@ export class BotManager {
     const bot = this.bots.get(botId);
     if (!bot) return;
 
+    // **NOVA POLÍTICA CONSERVADORA** - evitar reconexões desnecessárias
+    // Se o bot estiver funcionando bem, evitar reconexão
+    if (bot.status === 'ready' && bot.isActive) {
+      try {
+        // Teste rápido para ver se a sessão realmente está com problema
+        const state = await Promise.race([
+          bot.client.getState(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Test timeout')), 5000))
+        ]);
+
+        if (state === 'CONNECTED') {
+          console.log(`[RECONNECT] Bot ${botId} ainda está conectado, cancelando reconexão desnecessária`);
+          return; // Sessão ainda está boa, não reconectar
+        }
+      } catch (testError) {
+        console.log(`[RECONNECT] Bot ${botId} teste de conectividade falhou, procedendo com reconexão: ${testError.message}`);
+      }
+    }
+
     let reconnManager = this.reconnectionManager.get(botId);
     if (!reconnManager) {
       reconnManager = {
         attempts: 0,
-        maxAttempts: 10,
-        baseDelay: 1000, // 1 segundo
-        maxDelay: 300000, // 5 minutos
-        timeoutId: null
+        maxAttempts: 5, // Reduzido de 10 para 5 para ser mais conservador
+        baseDelay: 2000, // Aumentado de 1s para 2s
+        maxDelay: 600000, // Aumentado para 10 minutos
+        timeoutId: null,
+        lastReconnectionTime: 0
       };
       this.reconnectionManager.set(botId, reconnManager);
+    }
+
+    // **COOLDOWN** - evitar reconexões muito frequentes
+    const now = Date.now();
+    const timeSinceLastReconnection = now - reconnManager.lastReconnectionTime;
+    const minCooldown = 60000; // 1 minuto mínimo entre reconexões
+
+    if (timeSinceLastReconnection < minCooldown) {
+      console.log(`[RECONNECT] Bot ${botId} em cooldown, aguardando ${Math.round((minCooldown - timeSinceLastReconnection) / 1000)}s`);
+      setTimeout(() => this.handleReconnection(botId, error), minCooldown - timeSinceLastReconnection);
+      return;
     }
 
     // Cancelar tentativa anterior se existir
@@ -220,6 +251,9 @@ export class BotManager {
     const delay = exponentialDelay + jitter;
 
     console.log(`[RECONNECT] Tentativa ${reconnManager.attempts}/${reconnManager.maxAttempts} para bot ${botId} em ${Math.round(delay/1000)}s. Erro: ${error?.message || error}`);
+
+    // Marcar o tempo da tentativa de reconexão
+    reconnManager.lastReconnectionTime = Date.now();
 
     // Agendar reconexão
     reconnManager.timeoutId = setTimeout(async () => {
@@ -272,9 +306,57 @@ export class BotManager {
             '--no-first-run',
             '--no-zygote',
             '--single-process',
-            '--disable-gpu'
-          ]
-        }
+            '--disable-gpu',
+            // Argumentos extras para máxima estabilidade
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI',
+            '--disable-ipc-flooding-protection',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-crash-upload',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-domain-reliability',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--force-fieldtrials=SiteIsolationExtensions/Control',
+            '--disable-back-forward-cache',
+            '--disable-popup-blocking',
+            '--disable-print-preview',
+            '--max_old_space_size=4096',
+            '--memory-pressure-off',
+            '--disable-low-end-device-mode',
+            '--disable-backing-store-limit',
+            // Argumentos críticos para sessões persistentes
+            '--disable-web-security',
+            '--disable-site-isolation-trials',
+            '--disable-features=VizDisplayCompositor',
+            '--user-data-dir=/tmp/whatsapp-session-data',
+            '--aggressive-cache-discard'
+          ],
+          // Configurações adicionais do Puppeteer para estabilidade
+          ignoreHTTPSErrors: true,
+          ignoreDefaultArgs: ['--disable-extensions'],
+          slowMo: 100, // Adiciona delay entre ações para reduzir problemas
+          timeout: 120000, // 2 minutos timeout
+          protocolTimeout: 120000
+        },
+        // Configurações do cliente WhatsApp para máxima compatibilidade
+        webVersionCache: {
+          type: 'remote',
+          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        },
+        takeoverOnConflict: true,
+        takeoverTimeoutMs: 30000
       });
 
       // Configurar eventos para reconexão
@@ -353,14 +435,61 @@ export class BotManager {
 
   // Iniciar monitoramento periódico de bots stuck
   startStuckBotMonitoring() {
-    // Executar a cada 5 minutos
+    // Executar a cada 5 minutos - detecção de bots stuck
     setInterval(() => {
       if (!this.gracefulShutdown) {
         this.detectAndRecoverStuckBots();
       }
     }, 5 * 60 * 1000);
 
+    // Executar a cada 3 minutos - manter sessões vivas com ping
+    setInterval(() => {
+      if (!this.gracefulShutdown) {
+        this.performSessionKeepAlive();
+      }
+    }, 3 * 60 * 1000);
+
     console.log('[MONITOR] Monitoramento de bots stuck iniciado (intervalo: 5 minutos)');
+    console.log('[MONITOR] Keep-alive de sessões iniciado (intervalo: 3 minutos)');
+  }
+
+  // Manter sessões vivas através de pings periódicos
+  async performSessionKeepAlive() {
+    console.log('[KEEPALIVE] Executando keep-alive das sessões ativas...');
+
+    for (const [botId, bot] of this.bots.entries()) {
+      if (bot.status === 'ready' && bot.isActive && bot.client) {
+        try {
+          // Operações leves para manter a sessão viva
+          await Promise.race([
+            bot.client.getState(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+          ]);
+
+          // Tentar acessar informações básicas
+          const info = bot.client.info;
+          if (info && info.wid) {
+            console.log(`[KEEPALIVE] Bot ${botId} - sessão ativa e saudável`);
+            bot.lastKeepAlive = new Date();
+          } else {
+            console.warn(`[KEEPALIVE] Bot ${botId} - sem informações básicas, possível problema de sessão`);
+          }
+
+        } catch (error) {
+          console.warn(`[KEEPALIVE] Bot ${botId} - falha no keep-alive: ${error.message}`);
+          
+          // Se falhar várias vezes seguidas, marcar para reconexão
+          if (!bot.keepAliveFailures) bot.keepAliveFailures = 0;
+          bot.keepAliveFailures++;
+
+          if (bot.keepAliveFailures >= 3) {
+            console.error(`[KEEPALIVE] Bot ${botId} - múltiplas falhas de keep-alive (${bot.keepAliveFailures}), iniciando reconexão preventiva`);
+            bot.keepAliveFailures = 0; // Reset counter
+            this.handleReconnection(botId, new Error('Keep-alive failed multiple times'));
+          }
+        }
+      }
+    }
   }
 
   // Restore a bot from configuration
@@ -380,9 +509,55 @@ export class BotManager {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
-          ]
-        }
+            '--disable-gpu',
+            // Argumentos extras para máxima estabilidade
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI',
+            '--disable-ipc-flooding-protection',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-crash-upload',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-domain-reliability',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--force-fieldtrials=SiteIsolationExtensions/Control',
+            '--disable-back-forward-cache',
+            '--disable-popup-blocking',
+            '--disable-print-preview',
+            '--max_old_space_size=4096',
+            '--memory-pressure-off',
+            '--disable-low-end-device-mode',
+            '--disable-backing-store-limit',
+            // Argumentos críticos para sessões persistentes
+            '--disable-web-security',
+            '--disable-site-isolation-trials',
+            '--disable-features=VizDisplayCompositor',
+            '--user-data-dir=/tmp/whatsapp-session-data',
+            '--aggressive-cache-discard'
+          ],
+          ignoreHTTPSErrors: true,
+          ignoreDefaultArgs: ['--disable-extensions'],
+          slowMo: 100,
+          timeout: 120000,
+          protocolTimeout: 120000
+        },
+        webVersionCache: {
+          type: 'remote',
+          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        },
+        takeoverOnConflict: true,
+        takeoverTimeoutMs: 30000
       });
 
       const botData = {
@@ -553,9 +728,55 @@ export class BotManager {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
-          ]
-        }
+            '--disable-gpu',
+            // Argumentos extras para máxima estabilidade
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI',
+            '--disable-ipc-flooding-protection',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-crash-upload',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-domain-reliability',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--force-fieldtrials=SiteIsolationExtensions/Control',
+            '--disable-back-forward-cache',
+            '--disable-popup-blocking',
+            '--disable-print-preview',
+            '--max_old_space_size=4096',
+            '--memory-pressure-off',
+            '--disable-low-end-device-mode',
+            '--disable-backing-store-limit',
+            // Argumentos críticos para sessões persistentes
+            '--disable-web-security',
+            '--disable-site-isolation-trials',
+            '--disable-features=VizDisplayCompositor',
+            '--user-data-dir=/tmp/whatsapp-session-data',
+            '--aggressive-cache-discard'
+          ],
+          ignoreHTTPSErrors: true,
+          ignoreDefaultArgs: ['--disable-extensions'],
+          slowMo: 100,
+          timeout: 120000,
+          protocolTimeout: 120000
+        },
+        webVersionCache: {
+          type: 'remote',
+          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        },
+        takeoverOnConflict: true,
+        takeoverTimeoutMs: 30000
       });
 
     const botData = {
@@ -711,32 +932,46 @@ export class BotManager {
     }
 
     client.on('qr', async (qr) => {
+      console.log(`[QR] Bot ${id} solicitou QR code - Status: ${botData.status}, Active: ${botData.isActive}`);
+
       // Clear restoration timeout if QR is being generated
       if (botData.restorationTimeout) {
         clearTimeout(botData.restorationTimeout);
         botData.restorationTimeout = null;
       }
 
-      // Allow QR generation if restoration has timed out or failed
-      if (botData.isRestoring) {
-        console.log(`Restoration failed for bot ${id}, generating QR code for re-authentication`);
-        botData.isRestoring = false;
-      }
-      
-      // Skip QR only if bot is actually ready and active
-      if (botData.isActive && botData.status === 'ready') {
-        console.log(`Skipping QR generation for active bot ${id}`);
+      // **PREVENÇÃO AGRESSIVA DE QR DESNECESSÁRIO**
+      // Verificar se realmente precisamos do QR code
+      if (botData.status === 'ready' && botData.isActive) {
+        console.log(`[QR] Bot ${id} já está ativo e pronto, ignorando QR code desnecessário`);
         return;
       }
-      
+
+      // Se está em processo de restauração, permitir QR apenas se falhou
+      if (botData.isRestoring) {
+        console.log(`[QR] Bot ${id} em restauração falhou, gerando QR para re-autenticação`);
+        botData.isRestoring = false;
+      }
+
+      // Verificar se não geramos QR muito recentemente (evitar spam de QR)
+      const lastQRTime = botData.lastQRGenerated || 0;
+      const timeSinceLastQR = Date.now() - lastQRTime;
+      const minQRInterval = 30000; // 30 segundos mínimo entre QR codes
+
+      if (timeSinceLastQR < minQRInterval) {
+        console.log(`[QR] Bot ${id} QR code gerado muito recentemente, aguardando ${Math.round((minQRInterval - timeSinceLastQR) / 1000)}s`);
+        return;
+      }
+
       try {
         const qrCodeDataURL = await QRCode.toDataURL(qr);
         botData.qrCode = qrCodeDataURL;
         botData.status = 'waiting_for_scan';
+        botData.lastQRGenerated = Date.now(); // Marcar quando foi gerado
         this.emitBotUpdate(id);
-        console.log(`QR Code generated for bot ${id}`);
+        console.log(`[QR] QR Code gerado para bot ${id} - Escaneie para conectar`);
       } catch (error) {
-        console.error('Error generating QR code:', error);
+        console.error(`[QR] Erro ao gerar QR code para bot ${id}:`, error);
       }
     });
 
