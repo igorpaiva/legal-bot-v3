@@ -470,8 +470,8 @@ class DatabaseService {
   // Lawyer operations
   createLawyer(lawyerData) {
     const stmt = this.db.prepare(`
-      INSERT INTO lawyers (id, name, phone, legal_field, owner_id)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO lawyers (id, name, phone, legal_field, email, is_active, owner_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     
     return stmt.run(
@@ -479,6 +479,8 @@ class DatabaseService {
       lawyerData.name,
       lawyerData.phone,
       lawyerData.legalField,
+      lawyerData.email || null,
+      lawyerData.isActive !== undefined ? lawyerData.isActive : true,
       lawyerData.ownerId
     );
   }
@@ -499,6 +501,40 @@ class DatabaseService {
     
     const stmt = this.db.prepare(query);
     return stmt.all(...params).map(lawyer => this.formatLawyer(lawyer));
+  }
+
+  getAllLawyers() {
+    const stmt = this.db.prepare('SELECT * FROM lawyers ORDER BY created_at DESC');
+    return stmt.all().map(lawyer => this.formatLawyer(lawyer));
+  }
+
+  updateLawyer(id, lawyerData, ownerId) {
+    const stmt = this.db.prepare(`
+      UPDATE lawyers 
+      SET name = ?, phone = ?, legal_field = ?, email = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND owner_id = ?
+    `);
+    
+    return stmt.run(
+      lawyerData.name,
+      lawyerData.phone,
+      lawyerData.legalField,
+      lawyerData.email || null,
+      lawyerData.isActive !== undefined ? lawyerData.isActive : true,
+      id,
+      ownerId
+    );
+  }
+
+  deleteLawyer(id, ownerId) {
+    const stmt = this.db.prepare('DELETE FROM lawyers WHERE id = ? AND owner_id = ?');
+    return stmt.run(id, ownerId);
+  }
+
+  getLawyerById(id, ownerId) {
+    const stmt = this.db.prepare('SELECT * FROM lawyers WHERE id = ? AND owner_id = ?');
+    const lawyer = stmt.get(id, ownerId);
+    return lawyer ? this.formatLawyer(lawyer) : null;
   }
 
   // Conversation operations
@@ -590,6 +626,8 @@ class DatabaseService {
       name: lawyer.name,
       phone: lawyer.phone,
       legalField: lawyer.legal_field,
+      email: lawyer.email,
+      isActive: Boolean(lawyer.is_active),
       ownerId: lawyer.owner_id,
       createdAt: lawyer.created_at,
       updatedAt: lawyer.updated_at

@@ -39,9 +39,10 @@ class LawyerNotificationService {
   // Load lawyers from database
   async loadLawyers() {
     try {
-      // Get all lawyers from database - for now return empty array if no lawyers exist
-      // This can be enhanced when lawyers are added to the database
-      return [];
+      // Get all lawyers from database
+      const lawyers = this.databaseService.getAllLawyers();
+      console.log(`Loaded ${lawyers.length} lawyers from database`);
+      return lawyers;
     } catch (error) {
       console.error('Error loading lawyers:', error);
       return [];

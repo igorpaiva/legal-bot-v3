@@ -1,36 +1,22 @@
 import express from 'express';
-import fs from 'fs/promises';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import db from '../services/DatabaseService.js';
 
 const router = express.Router();
-const LAWYERS_FILE = path.join(process.cwd(), 'data', 'lawyers.json');
 
-// Ensure data directory exists
-async function ensureDataDirectory() {
-  try {
-    await fs.access(path.dirname(LAWYERS_FILE));
-  } catch {
-    await fs.mkdir(path.dirname(LAWYERS_FILE), { recursive: true });
-  }
-}
-
-// Load lawyers from file
-async function loadLawyers() {
-  try {
-    await ensureDataDirectory();
-    const data = await fs.readFile(LAWYERS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    // If file doesn't exist, return empty array
-    return [];
-  }
-}
-
-// Save lawyers to file
-async function saveLawyers(lawyers) {
-  await ensureDataDirectory();
-  await fs.writeFile(LAWYERS_FILE, JSON.stringify(lawyers, null, 2));
+// Format lawyer data for frontend (convert legal_field to specialty)
+function formatLawyerForFrontend(lawyer) {
+  return {
+    id: lawyer.id,
+    name: lawyer.name,
+    specialty: lawyer.legalField, // Convert legal_field to specialty
+    phone: lawyer.phone,
+    email: lawyer.email,
+    isActive: lawyer.isActive,
+    createdAt: lawyer.createdAt,
+    updatedAt: lawyer.updatedAt,
+    ownerId: lawyer.ownerId
+  };
 }
 
 // Format phone number to WhatsApp format (+5511999999999)
@@ -65,10 +51,9 @@ function formatPhoneForWhatsApp(phone) {
 // GET /api/lawyers - Get all lawyers for the authenticated user
 router.get('/', async (req, res) => {
   try {
-    const lawyers = await loadLawyers();
-    // Filter lawyers by owner (only show user's own lawyers)
-    const userLawyers = lawyers.filter(lawyer => lawyer.ownerId === req.user.id);
-    res.json(userLawyers);
+    const lawyers = db.getLawyersByOwner(req.user.id);
+    const formattedLawyers = lawyers.map(formatLawyerForFrontend);
+    res.json(formattedLawyers);
   } catch (error) {
     console.error('Error loading lawyers:', error);
     res.status(500).json({ error: 'Failed to load lawyers' });
@@ -79,14 +64,9 @@ router.get('/', async (req, res) => {
 router.get('/by-specialty/:specialty', async (req, res) => {
   try {
     const { specialty } = req.params;
-    const lawyers = await loadLawyers();
-    // Filter by both specialty and owner
-    const specialtyLawyers = lawyers.filter(
-      lawyer => lawyer.specialty === specialty && 
-                lawyer.isActive && 
-                lawyer.ownerId === req.user.id
-    );
-    res.json(specialtyLawyers);
+    const lawyers = db.getLawyersByField(specialty, req.user.id);
+    const formattedLawyers = lawyers.map(formatLawyerForFrontend);
+    res.json(formattedLawyers);
   } catch (error) {
     console.error('Error loading lawyers by specialty:', error);
     res.status(500).json({ error: 'Failed to load lawyers by specialty' });
@@ -109,29 +89,32 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Phone must have 11 digits (DDD + 9 digits)' });
     }
 
-    const lawyers = await loadLawyers();
-
     // Check if phone already exists for this user
-    if (lawyers.some(lawyer => lawyer.phone === phoneNumbers && lawyer.ownerId === req.user.id)) {
+    const existingLawyers = db.getLawyersByOwner(req.user.id);
+    if (existingLawyers.some(lawyer => lawyer.phone === phoneNumbers)) {
       return res.status(400).json({ error: 'Phone number already registered' });
     }
 
-    const newLawyer = {
+    const newLawyerData = {
       id: uuidv4(),
       name: name.trim(),
-      specialty,
+      legalField: specialty, // Frontend sends 'specialty', DB expects 'legalField'
       phone: phoneNumbers,
       email: email?.trim() || null,
       isActive: true,
-      ownerId: req.user.id, // Add owner ID for isolation
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      ownerId: req.user.id
     };
 
-    lawyers.push(newLawyer);
-    await saveLawyers(lawyers);
+    db.createLawyer(newLawyerData);
+    
+    // Return formatted data for frontend
+    const createdLawyer = formatLawyerForFrontend({
+      ...newLawyerData,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
 
-    res.status(201).json(newLawyer);
+    res.status(201).json(createdLawyer);
   } catch (error) {
     console.error('Error creating lawyer:', error);
     res.status(500).json({ error: 'Failed to create lawyer' });
@@ -155,34 +138,32 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Phone must have 11 digits (DDD + 9 digits)' });
     }
 
-    const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
-
-    if (lawyerIndex === -1) {
+    // Check if lawyer exists and belongs to user
+    const existingLawyer = db.getLawyerById(id, req.user.id);
+    if (!existingLawyer) {
       return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
     // Check if phone already exists for this user (excluding current lawyer)
-    if (lawyers.some((lawyer, index) => 
-      index !== lawyerIndex && 
-      lawyer.phone === phoneNumbers && 
-      lawyer.ownerId === req.user.id
-    )) {
+    const allLawyers = db.getLawyersByOwner(req.user.id);
+    if (allLawyers.some(lawyer => lawyer.id !== id && lawyer.phone === phoneNumbers)) {
       return res.status(400).json({ error: 'Phone number already registered' });
     }
 
     // Update lawyer
-    lawyers[lawyerIndex] = {
-      ...lawyers[lawyerIndex],
+    const updateData = {
       name: name.trim(),
-      specialty,
+      legalField: specialty, // Frontend sends 'specialty', DB expects 'legalField'
       phone: phoneNumbers,
       email: email?.trim() || null,
-      updatedAt: new Date().toISOString()
+      isActive: existingLawyer.isActive // Keep current status
     };
 
-    await saveLawyers(lawyers);
-    res.json(lawyers[lawyerIndex]);
+    db.updateLawyer(id, updateData, req.user.id);
+
+    // Get updated lawyer
+    const updatedLawyer = db.getLawyerById(id, req.user.id);
+    res.json(formatLawyerForFrontend(updatedLawyer));
   } catch (error) {
     console.error('Error updating lawyer:', error);
     res.status(500).json({ error: 'Failed to update lawyer' });
@@ -193,18 +174,27 @@ router.put('/:id', async (req, res) => {
 router.patch('/:id/toggle-active', async (req, res) => {
   try {
     const { id } = req.params;
-    const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
-
-    if (lawyerIndex === -1) {
+    
+    // Check if lawyer exists and belongs to user
+    const existingLawyer = db.getLawyerById(id, req.user.id);
+    if (!existingLawyer) {
       return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
-    lawyers[lawyerIndex].isActive = !lawyers[lawyerIndex].isActive;
-    lawyers[lawyerIndex].updatedAt = new Date().toISOString();
+    // Toggle the isActive status
+    const updateData = {
+      name: existingLawyer.name,
+      legalField: existingLawyer.legalField,
+      phone: existingLawyer.phone,
+      email: existingLawyer.email,
+      isActive: !existingLawyer.isActive
+    };
 
-    await saveLawyers(lawyers);
-    res.json(lawyers[lawyerIndex]);
+    db.updateLawyer(id, updateData, req.user.id);
+
+    // Get updated lawyer
+    const updatedLawyer = db.getLawyerById(id, req.user.id);
+    res.json(formatLawyerForFrontend(updatedLawyer));
   } catch (error) {
     console.error('Error toggling lawyer status:', error);
     res.status(500).json({ error: 'Failed to toggle lawyer status' });
@@ -215,16 +205,14 @@ router.patch('/:id/toggle-active', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const lawyers = await loadLawyers();
-    const lawyerIndex = lawyers.findIndex(lawyer => lawyer.id === id && lawyer.ownerId === req.user.id);
-
-    if (lawyerIndex === -1) {
+    
+    // Check if lawyer exists and belongs to user
+    const existingLawyer = db.getLawyerById(id, req.user.id);
+    if (!existingLawyer) {
       return res.status(404).json({ error: 'Lawyer not found or access denied' });
     }
 
-    lawyers.splice(lawyerIndex, 1);
-    await saveLawyers(lawyers);
-
+    db.deleteLawyer(id, req.user.id);
     res.json({ message: 'Lawyer deleted successfully' });
   } catch (error) {
     console.error('Error deleting lawyer:', error);
