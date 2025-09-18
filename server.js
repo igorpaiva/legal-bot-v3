@@ -222,6 +222,8 @@ io.on('connection', (socket) => {
       // Send filtered bot status to authenticated user
       let botStatus = botManager.getBotsStatus();
       
+      console.log(`📊 Sending bot status to ${user.email}:`, JSON.stringify(botStatus, null, 2));
+      
       if (user.role === 'law_office') {
         const userBots = botStatus.bots.filter(bot => bot.ownerId === user.id);
         botStatus = {
@@ -229,6 +231,7 @@ io.on('connection', (socket) => {
           active: userBots.filter(bot => bot.isActive).length,
           bots: userBots
         };
+        console.log(`📊 Filtered bot status for law_office ${user.email}:`, JSON.stringify(botStatus, null, 2));
       }
       
       socket.emit('bots-status', botStatus);

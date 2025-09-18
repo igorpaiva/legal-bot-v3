@@ -20,11 +20,33 @@ export class BotManager {
     this.bots = new Map();
     this.initializationLocks = new Map(); // Add locks to prevent concurrent initialization
     
+    // Message filtering configuration
+    this.maxMessageAge = parseInt(process.env.MAX_MESSAGE_AGE_SECONDS) || 30; // Default: 30 seconds for first connection
+    this.maxOfflineRecoveryHours = parseInt(process.env.MAX_OFFLINE_RECOVERY_HOURS) || 24; // Default: 24 hours
+    
+    console.log(`BotManager configured to recover offline messages from last ${this.maxOfflineRecoveryHours} hours (reconnections)`);
+    console.log(`First connection filter: ${this.maxMessageAge} seconds`);
+    
     // Load persisted bots on startup
     this.loadPersistedData();
     
+    // Cleanup processed messages periodically to prevent memory leaks
+    this.startPeriodicCleanup();
+    
     // Note: Removed automatic cleanup - bots should persist until manually deleted
     // Only clean up on specific error conditions or manual removal
+  }
+  
+  startPeriodicCleanup() {
+    // Clean up processed messages every hour
+    setInterval(() => {
+      this.bots.forEach((bot, botId) => {
+        if (bot.processedMessages && bot.processedMessages.size > 1000) {
+          console.log(`🧹 Bot ${botId} - Clearing processed messages cache (${bot.processedMessages.size} items)`);
+          bot.processedMessages.clear();
+        }
+      });
+    }, 60 * 60 * 1000); // Every hour
   }
 
   async loadPersistedData() {
@@ -122,8 +144,10 @@ export class BotManager {
       });
       
       // Prevent multiple simultaneous initializations of the same bot
-      if (existingBot && (existingBot.isInitializing || existingBot.isReconnecting)) {
+      // But allow if it's stopped (manual restart)
+      if (existingBot && (existingBot.isInitializing || existingBot.isReconnecting) && existingBot.status !== 'stopped') {
         console.log(`⚠️  Bot ${botId} is already being initialized or reconnecting, skipping`);
+        this.initializationLocks.delete(botId);
         return;
       }
       
@@ -224,6 +248,8 @@ export class BotManager {
           isReconnecting: false,
           isInitializing: true,
           ownerId: botConfig ? botConfig.ownerId : null, // Add ownerId from database
+          hasConnectedBefore: botConfig ? !!botConfig.phoneNumber : false, // True if bot has phone number (connected before)
+          processedMessages: new Set(), // Track processed messages to avoid duplicates
           // Initialize services
           conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName, this),
           groqService: new GroqService(),
@@ -354,7 +380,8 @@ export class BotManager {
         }
         
         // Limit reconnection attempts to prevent infinite loops
-        if (shouldReconnect && !botData.isReconnecting && botData.reconnectionAttempts < 10) {
+        // Don't reconnect if bot was manually stopped
+        if (shouldReconnect && !botData.isReconnecting && !botData.manuallyStopped && botData.reconnectionAttempts < 10) {
           botData.status = 'reconnecting';
           botData.isReconnecting = true;
           botData.reconnectionAttempts++;
@@ -366,9 +393,9 @@ export class BotManager {
           // Exponential backoff for reconnection delay
           const delay = Math.min(5000 * Math.pow(1.5, botData.reconnectionAttempts - 1), 60000);
           
-          // Reconnect after delay
-          setTimeout(async () => {
-            if (botData.isReconnecting && botData.reconnectionAttempts <= 10) {
+          // Store timer reference for cleanup
+          botData.reconnectionTimer = setTimeout(async () => {
+            if (botData.isReconnecting && !botData.manuallyStopped && botData.reconnectionAttempts <= 10) {
               console.log(`🔄 Reconnecting bot ${id}... (attempt ${botData.reconnectionAttempts})`);
               try {
                 await this.initializeBaileysBot(id, botData.name, botData.assistantName);
@@ -377,19 +404,22 @@ export class BotManager {
               }
             }
           }, delay);
-        } else if (!shouldReconnect || botData.reconnectionAttempts >= 10) {
+        } else if (!shouldReconnect || botData.reconnectionAttempts >= 10 || botData.manuallyStopped) {
           if (botData.reconnectionAttempts >= 10) {
             console.log(`🛑 Bot ${id} reached maximum reconnection attempts (10). Stopping.`);
           }
+          if (botData.manuallyStopped) {
+            console.log(`🛑 Bot ${id} was manually stopped. Not reconnecting.`);
+          }
           
-          botData.status = 'disconnected';
+          botData.status = botData.manuallyStopped ? 'stopped' : 'disconnected';
           // Keep isActive = true to allow restoration on restart
           // Only set isActive = false when manually deactivated by user
           botData.isReconnecting = false;
           botData.reconnectionAttempts = 0;
           
           await DatabaseService.updateBotExtended(id, {
-            status: 'disconnected'
+            status: botData.manuallyStopped ? 'stopped' : 'disconnected'
             // Don't set isActive: false here - let it remain true for restoration
           });
           
@@ -409,11 +439,21 @@ export class BotManager {
         botData.isReconnecting = false;
         botData.reconnectionAttempts = 0;
         botData.isInitializing = false;
+        // Reset manually stopped flag when bot connects successfully
+        botData.manuallyStopped = false;
         
         botData.status = 'connected';
         botData.isActive = true;
         botData.lastActivity = new Date();
         botData.qrCode = null;
+        
+        // Mark as connected before if this is first successful connection
+        if (!botData.hasConnectedBefore) {
+          botData.hasConnectedBefore = true;
+          console.log(`🎉 Bot ${id} - First successful connection! Will process offline messages on future reconnections.`);
+        }
+        
+        console.log(`📋 Bot ${id} - Message age filter: ${botData.hasConnectedBefore ? 'flexible (reconnection)' : 'strict (first connection)'}`);
         
         // Get phone number
         try {
@@ -448,6 +488,53 @@ export class BotManager {
         if (!message.key.fromMe && m.type === 'notify') {
           const remoteJid = message.key.remoteJid;
           const contactNumber = remoteJid.split('@')[0];
+          
+          // **SMART MESSAGE FILTERING BY AGE**
+          // Different behavior for first connection vs reconnections
+          const messageTimestamp = (message.messageTimestamp?.low || message.messageTimestamp || Date.now() / 1000) * 1000;
+          const now = Date.now();
+          const messageAge = now - messageTimestamp;
+          
+          let maxMessageAge;
+          let filterReason;
+          
+          if (!botData.hasConnectedBefore) {
+            // **FIRST CONNECTION**: Strict filter - only messages from last few seconds
+            maxMessageAge = this.maxMessageAge * 1000;
+            filterReason = "first connection - avoiding history processing";
+          } else {
+            // **RECONNECTION**: Flexible filter - messages since last activity or configured hours
+            const lastActivityTime = botData.lastActivity ? botData.lastActivity.getTime() : 0;
+            const timeSinceLastActivity = now - lastActivityTime;
+            const maxOfflineAge = this.maxOfflineRecoveryHours * 60 * 60 * 1000; // Configured hours
+            
+            // If offline for less than configured limit, process messages since last activity
+            // If offline for longer, process only last 2 hours
+            if (timeSinceLastActivity < maxOfflineAge && lastActivityTime > 0) {
+              maxMessageAge = timeSinceLastActivity + (5 * 60 * 1000); // Last activity + 5min buffer
+              filterReason = "reconnection - processing since last activity";
+            } else {
+              maxMessageAge = 2 * 60 * 60 * 1000; // 2 hours for long offline
+              filterReason = "reconnection - long offline, processing last 2 hours";
+            }
+          }
+          
+          if (messageAge > maxMessageAge) {
+            console.log(`📜 Bot ${id} - Skipping old message (${Math.round(messageAge/1000)}s ago, ${filterReason})`);
+            return;
+          } else if (!botData.hasConnectedBefore) {
+            console.log(`📝 Bot ${id} - Processing recent message (${Math.round(messageAge/1000)}s ago, first connection)`);
+          } else {
+            console.log(`📬 Bot ${id} - Processing offline message (${Math.round(messageAge/1000)}s ago, reconnection)`);
+          }
+          
+          // Prevent duplicate message processing
+          const messageId = message.key.id;
+          if (botData.processedMessages.has(messageId)) {
+            console.log(`🔄 Bot ${id} - Duplicate message detected, skipping: ${messageId}`);
+            return;
+          }
+          botData.processedMessages.add(messageId);
           
           console.log(`📨 Bot ${id} received message from: ${contactNumber}`);
           
@@ -643,7 +730,7 @@ export class BotManager {
         assistantName: config.assistantName,
         status: 'restoring',
         phoneNumber: config.phoneNumber,
-        isActive: false,
+        isActive: config.isActive !== false, // Restore as active unless explicitly set to false
         messageCount: config.messageCount || 0,
         lastActivity: config.lastActivity ? new Date(config.lastActivity) : null,
         createdAt: config.createdAt ? new Date(config.createdAt) : new Date(),
@@ -686,15 +773,29 @@ export class BotManager {
 
   async stopBot(botId) {
     const bot = this.bots.get(botId);
-    if (bot && bot.socket) {
+    if (bot) {
       try {
+        console.log(`🛑 Stopping bot ${botId}...`);
+        
         // Cancel any pending reconnection timer
         if (bot.reconnectionTimer) {
           clearTimeout(bot.reconnectionTimer);
           bot.reconnectionTimer = null;
         }
         
-        bot.socket.end();
+        // Set manually stopped flag to prevent automatic reconnection
+        bot.manuallyStopped = true;
+        
+        // Reset reconnection flags to prevent conflicts
+        bot.isReconnecting = false;
+        bot.reconnectionAttempts = 0;
+        bot.isInitializing = false;
+        
+        // Close socket if exists
+        if (bot.socket) {
+          bot.socket.end();
+        }
+        
         bot.isActive = false;
         bot.status = 'stopped';
         
@@ -704,6 +805,7 @@ export class BotManager {
         });
         
         this.emitBotUpdate(botId);
+        console.log(`✅ Bot ${botId} stopped successfully`);
         return true;
       } catch (error) {
         console.error(`❌ Error stopping bot ${botId}:`, error);
@@ -815,6 +917,7 @@ export class BotManager {
   emitBotUpdate(botId) {
     const bot = this.bots.get(botId);
     if (bot) {
+      console.log(`📢 Emitting bot update for ${botId} - Status: ${bot.status}, Active: ${bot.isActive}`);
       this.io.emit('bot-updated', {
         id: bot.id,
         name: bot.name,
@@ -835,6 +938,19 @@ export class BotManager {
     if (bot) {
       console.log(`🔄 Restarting bot ${botId}...`);
       
+      // Cancel any pending reconnection timer
+      if (bot.reconnectionTimer) {
+        clearTimeout(bot.reconnectionTimer);
+        bot.reconnectionTimer = null;
+      }
+      
+      // Reset all reconnection and initialization flags
+      bot.isReconnecting = false;
+      bot.reconnectionAttempts = 0;
+      bot.isInitializing = false;
+      // Remove manually stopped flag to allow reconnection
+      bot.manuallyStopped = false;
+      
       // Stop current connection
       if (bot.socket) {
         try {
@@ -844,8 +960,21 @@ export class BotManager {
         }
       }
       
-      // Reinitialize
-      await this.initializeBaileysBot(botId, bot.name, bot.assistantName);
+      // Clear any existing initialization locks
+      if (this.initializationLocks.has(botId)) {
+        this.initializationLocks.delete(botId);
+      }
+      
+      // Wait a moment for cleanup then reinitialize
+      setTimeout(async () => {
+        try {
+          await this.initializeBaileysBot(botId, bot.name, bot.assistantName);
+          console.log(`✅ Bot ${botId} restarted successfully`);
+        } catch (error) {
+          console.error(`❌ Error restarting bot ${botId}:`, error);
+        }
+      }, 1000);
+      
       return true;
     }
     return false;
