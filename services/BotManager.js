@@ -1,4 +1,4 @@
-import { default as makeWASocket, DisconnectReason, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { default as makeWASocket, DisconnectReason, useMultiFileAuthState, downloadMediaMessage } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
@@ -9,6 +9,7 @@ import { LegalTriageService } from './LegalTriageService.js';
 import { ConversationFlowService } from './ConversationFlowService.js';
 import { AudioTranscriptionService } from './AudioTranscriptionService.js';
 import { PdfProcessingService } from './PdfProcessingService.js';
+import GoogleDriveService from './GoogleDriveService.js';
 import fs from 'fs';
 import path from 'path';
 import pino from 'pino';
@@ -199,6 +200,9 @@ export class BotManager {
         if (!botData.pdfProcessingService) {
           botData.pdfProcessingService = new PdfProcessingService();
         }
+        if (!botData.googleDriveService) {
+          botData.googleDriveService = new GoogleDriveService(botData.ownerId);
+        }
       } else {
         // Create new bot data
         console.log(`🆕 Creating new bot data for ${botId}`);
@@ -225,7 +229,8 @@ export class BotManager {
           groqService: new GroqService(),
           humanLikeDelay: new HumanLikeDelay(),
           audioTranscriptionService: new AudioTranscriptionService(),
-          pdfProcessingService: new PdfProcessingService()
+          pdfProcessingService: new PdfProcessingService(),
+          googleDriveService: new GoogleDriveService(botConfig ? botConfig.ownerId : null)
         };
 
         this.bots.set(botId, botData);
@@ -438,20 +443,116 @@ export class BotManager {
           console.log(`📨 Bot ${id} received message from: ${contactNumber}`);
           
           try {
-            const messageText = message.message?.conversation || 
-                               message.message?.extendedTextMessage?.text || '';
+            // Update bot stats
+            botData.messageCount++;
+            botData.lastActivity = new Date();
+            this.emitBotUpdate(id);
+
+            // Get contact name from push name or use number
+            const contactName = message.pushName || contactNumber;
             
-            if (messageText.trim()) {
-              // Update bot stats
-              botData.messageCount++;
-              botData.lastActivity = new Date();
-              this.emitBotUpdate(id);
-
-              // Get contact name from push name or use number
-              const contactName = message.pushName || contactNumber;
+            let messageText = '';
+            
+            // Handle different message types in Baileys format
+            if (message.message?.audioMessage || message.message?.pttMessage) {
+              // Handle audio/voice messages
+              console.log(`📢 Bot ${id} - Processing audio message from ${contactName}`);
               
-              console.log(`📨 Bot ${id} processing message from ${contactName}: ${messageText.substring(0, 50)}...`);
-
+              try {
+                const audioMessage = message.message.audioMessage || message.message.pttMessage;
+                const media = await downloadMediaMessage(message, 'buffer', {});
+                
+                // Upload to Google Drive
+                await this.uploadMediaToGoogleDrive(botData, media, contactName, contactNumber, 'audio');
+                
+                // Transcribe audio
+                const transcription = await botData.audioTranscriptionService.transcribeAudio({
+                  data: media.toString('base64'),
+                  mimetype: audioMessage.mimetype
+                });
+                
+                if (transcription) {
+                  messageText = transcription;
+                  console.log(`📢 Bot ${id} - Audio transcribed: ${transcription.substring(0, 100)}...`);
+                } else {
+                  messageText = 'Desculpe, não consegui entender o áudio. Pode tentar enviar uma mensagem de texto?';
+                }
+              } catch (error) {
+                console.error(`❌ Bot ${id} - Error processing audio:`, error);
+                messageText = 'Desculpe, tive problemas para processar o áudio. Pode tentar enviar uma mensagem de texto?';
+              }
+            } else if (message.message?.documentMessage) {
+              // Handle document messages
+              console.log(`📄 Bot ${id} - Processing document from ${contactName}`);
+              
+              try {
+                const documentMessage = message.message.documentMessage;
+                const media = await downloadMediaMessage(message, 'buffer', {});
+                
+                // Upload to Google Drive
+                await this.uploadMediaToGoogleDrive(botData, media, contactName, contactNumber, 'document');
+                
+                // Check if it's a PDF
+                if (documentMessage.mimetype && botData.pdfProcessingService.isPdfMimetype(documentMessage.mimetype)) {
+                  console.log(`📄 Bot ${id} - PDF document received from ${contactName}`);
+                  messageText = '[DOCUMENTO PDF ANEXADO]';
+                } else {
+                  // Unsupported document type
+                  await this.sendMessage(botData, remoteJid, 'Desculpe, apenas documentos PDF são suportados. Pode enviar um PDF ou me contar sobre o documento por texto/áudio?');
+                  return;
+                }
+              } catch (error) {
+                console.error(`❌ Bot ${id} - Error processing document:`, error);
+                await this.sendMessage(botData, remoteJid, 'Desculpe, tive problemas para processar o documento. Pode tentar enviar novamente ou me contar sobre o conteúdo por texto/áudio?');
+                return;
+              }
+            } else if (message.message?.imageMessage) {
+              // Handle image messages
+              console.log(`🖼️ Bot ${id} - Processing image from ${contactName}`);
+              
+              try {
+                const media = await downloadMediaMessage(message, 'buffer', {});
+                
+                // Upload to Google Drive
+                await this.uploadMediaToGoogleDrive(botData, media, contactName, contactNumber, 'image');
+                
+                messageText = '[IMAGEM ANEXADA]';
+                console.log(`🖼️ Bot ${id} - Image processed and uploaded to Google Drive`);
+              } catch (error) {
+                console.error(`❌ Bot ${id} - Error processing image:`, error);
+                messageText = '[IMAGEM ANEXADA]';
+              }
+            } else if (message.message?.videoMessage) {
+              // Handle video messages
+              console.log(`🎥 Bot ${id} - Processing video from ${contactName}`);
+              
+              try {
+                const media = await downloadMediaMessage(message, 'buffer', {});
+                
+                // Upload to Google Drive
+                await this.uploadMediaToGoogleDrive(botData, media, contactName, contactNumber, 'video');
+                
+                messageText = '[VIDEO ANEXADO]';
+                console.log(`🎥 Bot ${id} - Video processed and uploaded to Google Drive`);
+              } catch (error) {
+                console.error(`❌ Bot ${id} - Error processing video:`, error);
+                messageText = '[VIDEO ANEXADO]';
+              }
+            } else {
+              // Handle regular text messages
+              messageText = message.message?.conversation || 
+                           message.message?.extendedTextMessage?.text || '';
+              
+              if (messageText.trim()) {
+                console.log(`� Bot ${id} processing text message from ${contactName}: ${messageText.substring(0, 50)}...`);
+              } else {
+                console.log(`⚠️ Bot ${id} - Unsupported message type from ${contactName}`);
+                return;
+              }
+            }
+            
+            // Process message if we have text content
+            if (messageText.trim()) {
               // Add human-like delay before processing
               if (botData.humanLikeDelay && typeof botData.humanLikeDelay.waitBeforeResponse === 'function') {
                 await botData.humanLikeDelay.waitBeforeResponse();
@@ -549,7 +650,8 @@ export class BotManager {
         groqService: new GroqService(),
         humanLikeDelay: new HumanLikeDelay(),
         audioTranscriptionService: new AudioTranscriptionService(),
-        pdfProcessingService: new PdfProcessingService()
+        pdfProcessingService: new PdfProcessingService(),
+        googleDriveService: new GoogleDriveService(config.ownerId)
       };
 
       this.bots.set(config.id, botData);
@@ -646,6 +748,53 @@ export class BotManager {
       active: Array.from(this.bots.values()).filter(bot => bot.isActive).length,
       bots: this.getAllBots()
     };
+  }
+
+  async uploadMediaToGoogleDrive(botData, mediaBuffer, contactName, userPhone, mediaType) {
+    try {
+      // Check if Google Drive service is authenticated
+      const authStatus = await botData.googleDriveService.checkAuthentication();
+      
+      if (!authStatus.authenticated) {
+        console.log(`Bot ${botData.id} - Google Drive not authenticated, skipping upload`);
+        return null;
+      }
+
+      // Get or find client information
+      const client = botData.conversationFlowService.findOrCreateClient(userPhone);
+      const clientName = client.name || contactName || 'Unknown Client';
+
+      // Generate filename based on media type and current timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      let fileName = `${mediaType}_${timestamp}`;
+      
+      // Add appropriate extension based on media type (we'll use generic extensions since we may not have mimetype)
+      const extensionMap = {
+        'audio': 'ogg',
+        'document': 'pdf',
+        'image': 'jpg',
+        'video': 'mp4'
+      };
+      
+      fileName += `.${extensionMap[mediaType] || 'bin'}`;
+
+      // Upload to client's Google Drive folder
+      const uploadResult = await botData.googleDriveService.uploadClientDocument(
+        clientName,
+        userPhone,
+        mediaBuffer,
+        fileName,
+        'application/octet-stream' // Generic mimetype since Baileys doesn't always provide it
+      );
+
+      console.log(`Bot ${botData.id} - Successfully uploaded ${mediaType} to Google Drive:`, uploadResult.name);
+      
+      return uploadResult;
+    } catch (error) {
+      console.error(`Bot ${botData.id} - Error uploading to Google Drive:`, error);
+      // Don't throw error - just log it and continue with normal processing
+      return null;
+    }
   }
 
   emitBotUpdate(botId) {
