@@ -585,6 +585,7 @@ export class BotManager {
         }
       } else if (connection === 'open') {
         console.log(`✅ Bot ${id} connected successfully!`);
+        console.log(`🔍 Bot ${id} - hasConnectedBefore status: ${botData.hasConnectedBefore} (type: ${typeof botData.hasConnectedBefore})`);
         
         // Cancel any pending reconnection timer
         if (botData.reconnectionTimer) {
@@ -623,6 +624,13 @@ export class BotManager {
         
         console.log(`📋 Bot ${id} - Message age filter: ${botData.hasConnectedBefore ? 'flexible (reconnection)' : 'strict (first connection)'}`);
         
+        console.log(`🔍 [DEBUG] Bot ${id} - Connection details:`, {
+          hasConnectedBefore: botData.hasConnectedBefore,
+          lastActivity: botData.lastActivity,
+          maxOfflineRecoveryHours: this.maxOfflineRecoveryHours,
+          maxMessageAge: this.maxMessageAge
+        });
+        
         // Get phone number
         try {
           const user = socket.user;
@@ -654,17 +662,46 @@ export class BotManager {
     // Message handler
     socket.ev.on('messages.upsert', async (m) => {
       try {
+        console.log(`🔍 [DEBUG] Bot ${id} - Received messages.upsert event:`, {
+          messageCount: m.messages.length,
+          type: m.type,
+          firstMessageKey: m.messages[0]?.key
+        });
+        
         const message = m.messages[0];
         
-        if (!message.key.fromMe && m.type === 'notify') {
+        // Accept both 'notify' (real-time) and 'append' (offline sync) messages
+        // For reconnections, we want to process 'append' messages to handle offline messages
+        const shouldProcessMessage = !message.key.fromMe && (
+          m.type === 'notify' || 
+          (m.type === 'append' && botData.hasConnectedBefore)
+        );
+        
+        if (shouldProcessMessage) {
           const remoteJid = message.key.remoteJid;
           const contactNumber = remoteJid.split('@')[0];
+          
+          console.log(`🔍 [DEBUG] Bot ${id} - Message type accepted: ${m.type} (hasConnectedBefore: ${botData.hasConnectedBefore})`);
+          
+          console.log(`🔍 [DEBUG] Bot ${id} - Processing message from ${contactNumber}:`, {
+            messageId: message.key.id,
+            timestamp: message.messageTimestamp,
+            hasConnectedBefore: botData.hasConnectedBefore,
+            lastActivity: botData.lastActivity
+          });
           
           // **SMART MESSAGE FILTERING BY AGE**
           // Different behavior for first connection vs reconnections
           const messageTimestamp = (message.messageTimestamp?.low || message.messageTimestamp || Date.now() / 1000) * 1000;
           const now = Date.now();
           const messageAge = now - messageTimestamp;
+          
+          console.log(`🔍 [DEBUG] Bot ${id} - Message timing:`, {
+            messageTimestamp: new Date(messageTimestamp).toISOString(),
+            now: new Date(now).toISOString(),
+            messageAgeSeconds: Math.round(messageAge/1000),
+            hasConnectedBefore: botData.hasConnectedBefore
+          });
           
           let maxMessageAge;
           let filterReason;
@@ -679,6 +716,12 @@ export class BotManager {
             const timeSinceLastActivity = now - lastActivityTime;
             const maxOfflineAge = this.maxOfflineRecoveryHours * 60 * 60 * 1000; // Configured hours
             
+            console.log(`🔍 [DEBUG] Bot ${id} - Reconnection timing:`, {
+              lastActivityTime: lastActivityTime ? new Date(lastActivityTime).toISOString() : 'never',
+              timeSinceLastActivityHours: Math.round(timeSinceLastActivity / (60 * 60 * 1000) * 100) / 100,
+              maxOfflineRecoveryHours: this.maxOfflineRecoveryHours
+            });
+            
             // If offline for less than configured limit, process messages since last activity
             // If offline for longer, process only last 2 hours
             if (timeSinceLastActivity < maxOfflineAge && lastActivityTime > 0) {
@@ -690,17 +733,30 @@ export class BotManager {
             }
           }
           
+          console.log(`🔍 [DEBUG] Bot ${id} - Filter decision:`, {
+            maxMessageAgeSeconds: Math.round(maxMessageAge/1000),
+            messageAgeSeconds: Math.round(messageAge/1000),
+            willProcess: messageAge <= maxMessageAge,
+            filterReason
+          });
+          
           if (messageAge > maxMessageAge) {
             console.log(`📜 Bot ${id} - Skipping old message (${Math.round(messageAge/1000)}s ago, ${filterReason})`);
             return;
           } else if (!botData.hasConnectedBefore) {
-            console.log(`📝 Bot ${id} - Processing recent message (${Math.round(messageAge/1000)}s ago, first connection)`);
+            console.log(`📝 Bot ${id} - Processing recent message (${Math.round(messageAge/1000)}s ago, first connection, type: ${m.type})`);
           } else {
-            console.log(`📬 Bot ${id} - Processing offline message (${Math.round(messageAge/1000)}s ago, reconnection)`);
+            console.log(`📬 Bot ${id} - Processing offline message (${Math.round(messageAge/1000)}s ago, reconnection, type: ${m.type})`);
           }
           
           // Prevent duplicate message processing
           const messageId = message.key.id;
+          
+          // Ensure processedMessages is initialized (defensive programming)
+          if (!botData.processedMessages) {
+            botData.processedMessages = new Set();
+          }
+          
           if (botData.processedMessages.has(messageId)) {
             console.log(`🔄 Bot ${id} - Duplicate message detected, skipping: ${messageId}`);
             return;
@@ -852,6 +908,13 @@ export class BotManager {
               console.error(`❌ Error sending fallback message for bot ${id}:`, fallbackError);
             }
           }
+        } else {
+          console.log(`🔍 [DEBUG] Bot ${id} - Skipping message (reason: ${message.key.fromMe ? 'fromMe=true' : `type=${m.type}, hasConnectedBefore=${botData.hasConnectedBefore}`}):`, {
+            fromMe: message.key.fromMe,
+            type: m.type,
+            hasConnectedBefore: botData.hasConnectedBefore,
+            messageKey: message.key
+          });
         }
       } catch (error) {
         console.error(`❌ Error in message handler for bot ${id}:`, error);
@@ -910,6 +973,7 @@ export class BotManager {
         isRestoring: true,
         ownerId: config.ownerId, // Add missing ownerId field
         hasConnectedBefore: !!config.hasConnectedBefore, // CRITICAL: Restore hasConnectedBefore flag
+        processedMessages: new Set(), // Track processed messages to avoid duplicates
         // Initialize services
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this),
         groqService: new GroqService(),
