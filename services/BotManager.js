@@ -1,4 +1,4 @@
-import { default as makeWASocket, DisconnectReason, useMultiFileAuthState, downloadMediaMessage } from '@whiskeysockets/baileys';
+import { default as makeWASocket, DisconnectReason, useMultiFileAuthState, downloadMediaMessage, isJidBroadcast } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
@@ -19,6 +19,8 @@ export class BotManager {
     this.io = io;
     this.bots = new Map();
     this.initializationLocks = new Map(); // Add locks to prevent concurrent initialization
+    this.keepAliveTimers = new Map(); // Keep-alive timers for each bot
+    this.globalInitLock = false; // Global lock to prevent simultaneous initializations
     
     // Message filtering configuration
     this.maxMessageAge = parseInt(process.env.MAX_MESSAGE_AGE_SECONDS) || 30; // Default: 30 seconds for first connection
@@ -32,6 +34,9 @@ export class BotManager {
     
     // Cleanup processed messages periodically to prevent memory leaks
     this.startPeriodicCleanup();
+    
+    // Start global keep-alive system
+    this.startGlobalKeepAlive();
     
     // Note: Removed automatic cleanup - bots should persist until manually deleted
     // Only clean up on specific error conditions or manual removal
@@ -47,6 +52,135 @@ export class BotManager {
         }
       });
     }, 60 * 60 * 1000); // Every hour
+  }
+  
+  startGlobalKeepAlive() {
+    // Global keep-alive check every 5 minutes
+    setInterval(() => {
+      this.bots.forEach((bot, botId) => {
+        if (bot.status === 'connected' && bot.socket) {
+          this.performKeepAlive(botId, bot);
+        }
+      });
+    }, 5 * 60 * 1000); // Every 5 minutes
+    
+    console.log('🔄 Global keep-alive system started (checks every 5 minutes)');
+  }
+  
+  async performKeepAlive(botId, bot) {
+    try {
+      if (!bot.socket || bot.status !== 'connected') {
+        return;
+      }
+      
+      // Update last activity
+      bot.lastActivity = new Date();
+      
+      // Send a simple ping to WhatsApp to keep connection alive
+      // This is done by checking the socket state
+      const state = bot.socket.readyState;
+      
+      if (state === bot.socket.CONNECTING) {
+        console.log(`⏳ Bot ${botId} - Connection in progress, skipping keep-alive`);
+        return;
+      }
+      
+      if (state === bot.socket.CLOSED || state === bot.socket.CLOSING) {
+        console.log(`⚠️ Bot ${botId} - Socket closed/closing, triggering reconnection`);
+        if (!bot.manuallyStopped && !bot.isReconnecting) {
+          this.handleConnectionLoss(botId, bot);
+        }
+        return;
+      }
+      
+      // For connected sockets, send a lightweight query to maintain connection
+      if (state === bot.socket.OPEN) {
+        try {
+          // Query presence (lightweight operation)
+          await bot.socket.presenceSubscribe(bot.socket.user?.id);
+          console.log(`💓 Bot ${botId} - Keep-alive successful`);
+        } catch (error) {
+          console.log(`⚠️ Bot ${botId} - Keep-alive failed:`, error.message);
+          if (!bot.manuallyStopped && !bot.isReconnecting) {
+            this.handleConnectionLoss(botId, bot);
+          }
+        }
+      }
+      
+    } catch (error) {
+      console.error(`❌ Bot ${botId} - Keep-alive error:`, error);
+      if (!bot.manuallyStopped && !bot.isReconnecting) {
+        this.handleConnectionLoss(botId, bot);
+      }
+    }
+  }
+  
+  handleConnectionLoss(botId, bot) {
+    console.log(`🔌 Bot ${botId} - Handling connection loss`);
+    
+    // Mark as disconnected
+    bot.status = 'disconnected';
+    bot.isReconnecting = true;
+    bot.reconnectionAttempts = (bot.reconnectionAttempts || 0) + 1;
+    
+    // Emit update
+    this.emitBotUpdate(botId);
+    
+    // Start reconnection with exponential backoff
+    const delay = Math.min(5000 * Math.pow(1.5, bot.reconnectionAttempts - 1), 60000);
+    
+    console.log(`🔄 Bot ${botId} - Scheduling reconnection in ${delay}ms (attempt ${bot.reconnectionAttempts})`);
+    
+    bot.reconnectionTimer = setTimeout(async () => {
+      if (bot.isReconnecting && !bot.manuallyStopped && bot.reconnectionAttempts <= 10) {
+        console.log(`🔄 Bot ${botId} - Attempting reconnection (${bot.reconnectionAttempts}/10)`);
+        try {
+          // Wait for global lock to be released
+          while (this.globalInitLock) {
+            console.log(`⏳ Bot ${botId} waiting for global initialization lock for reconnection...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          
+          // Acquire global lock
+          this.globalInitLock = true;
+          console.log(`🔐 Bot ${botId} acquired global initialization lock for reconnection`);
+          
+          await this.initializeBaileysBot(botId, bot.name, bot.assistantName);
+          
+          // Release global lock
+          this.globalInitLock = false;
+          console.log(`🔓 Bot ${botId} released global initialization lock for reconnection`);
+          
+        } catch (error) {
+          console.error(`❌ Bot ${botId} - Reconnection failed:`, error);
+          // Always release lock on error
+          this.globalInitLock = false;
+        }
+      }
+    }, delay);
+  }
+  
+  setupBotKeepAlive(botId, bot) {
+    // Clear any existing keep-alive timer
+    if (this.keepAliveTimers.has(botId)) {
+      clearInterval(this.keepAliveTimers.get(botId));
+    }
+    
+    // Set up individual bot keep-alive (every 2 minutes)
+    const keepAliveTimer = setInterval(() => {
+      this.performKeepAlive(botId, bot);
+    }, 2 * 60 * 1000); // Every 2 minutes
+    
+    this.keepAliveTimers.set(botId, keepAliveTimer);
+    console.log(`💓 Bot ${botId} - Individual keep-alive timer started`);
+  }
+  
+  clearBotKeepAlive(botId) {
+    if (this.keepAliveTimers.has(botId)) {
+      clearInterval(this.keepAliveTimers.get(botId));
+      this.keepAliveTimers.delete(botId);
+      console.log(`💓 Bot ${botId} - Keep-alive timer cleared`);
+    }
   }
 
   async loadPersistedData() {
@@ -174,6 +308,14 @@ export class BotManager {
       if (!fs.existsSync(sessionPath)) {
         fs.mkdirSync(sessionPath, { recursive: true });
       }
+      
+      // Check for potential session conflicts and clean if necessary
+      const credPath = path.join(sessionPath, 'creds.json');
+      if (fs.existsSync(credPath)) {
+        console.log(`🔍 Checking session integrity for bot ${botId}`);
+        // Add small delay for session consistency
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
 
       // Create auth state
       const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -186,14 +328,27 @@ export class BotManager {
         }
       });
 
-      // Create socket
+      // Create socket with keep-alive configurations
       const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, // We'll handle QR in frontend
         logger,
         browser: ['Legal Bot', 'Chrome', '1.0.0'],
         defaultQueryTimeoutMs: 60000,
-        markOnlineOnConnect: true
+        markOnlineOnConnect: true,
+        // Keep-alive configurations
+        keepAliveIntervalMs: 30000, // Send keep-alive every 30 seconds
+        connectTimeoutMs: 60000, // Connection timeout
+        qrTimeout: 60000, // QR timeout
+        retryRequestDelayMs: 2000, // Delay between retries
+        maxMsgRetryCount: 3, // Max retry attempts for messages
+        // Performance optimizations
+        shouldIgnoreJid: jid => isJidBroadcast(jid), // Ignore broadcasts
+        shouldSyncHistoryMessage: () => false, // Don't sync history for performance
+        generateHighQualityLinkPreview: false, // Disable link previews for performance
+        // Connection settings
+        waWebSocketUrl: 'wss://web.whatsapp.com/ws/chat',
+        connectCooldownMs: 10000, // Cooldown between connection attempts
       });
 
       // If bot already exists (reconnection), update it with new socket
@@ -248,7 +403,7 @@ export class BotManager {
           isReconnecting: false,
           isInitializing: true,
           ownerId: botConfig ? botConfig.ownerId : null, // Add ownerId from database
-          hasConnectedBefore: botConfig ? !!botConfig.phoneNumber : false, // True if bot has phone number (connected before)
+          hasConnectedBefore: botConfig ? !!botConfig.hasConnectedBefore : false, // True if bot has connected before
           processedMessages: new Set(), // Track processed messages to avoid duplicates
           // Initialize services
           conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), assistantName, this),
@@ -363,12 +518,10 @@ export class BotManager {
           botData.reconnectionAttempts = 0;
         }
         
-        // If session was replaced by another connection, stop reconnecting
+        // If session was replaced by another connection, try to reconnect
         if (isReplaced) {
-          console.log(`🔄 Bot ${id} session was replaced by another connection. Setting to disconnected state.`);
+          console.log(`🔄 Bot ${id} session was replaced by another connection. Will attempt reconnection...`);
           botData.status = 'disconnected';
-          botData.isReconnecting = false;
-          botData.reconnectionAttempts = 0;
           
           await DatabaseService.updateBotExtended(id, {
             status: 'disconnected'
@@ -376,6 +529,11 @@ export class BotManager {
           });
           
           this.emitBotUpdate(id);
+          
+          // Try to reconnect after session conflict
+          if (!botData.manuallyStopped) {
+            this.handleConnectionLoss(id, botData);
+          }
           return;
         }
         
@@ -451,6 +609,16 @@ export class BotManager {
         if (!botData.hasConnectedBefore) {
           botData.hasConnectedBefore = true;
           console.log(`🎉 Bot ${id} - First successful connection! Will process offline messages on future reconnections.`);
+          
+          // Update database with has_connected_before = true
+          try {
+            await DatabaseService.updateBotExtended(id, { has_connected_before: 1 });
+            console.log(`💾 Bot ${id} - Updated has_connected_before in database`);
+          } catch (error) {
+            console.error(`❌ Bot ${id} - Failed to update has_connected_before in database:`, error);
+          }
+        } else {
+          console.log(`🔄 Bot ${id} - Reconnection detected! Will process offline messages.`);
         }
         
         console.log(`📋 Bot ${id} - Message age filter: ${botData.hasConnectedBefore ? 'flexible (reconnection)' : 'strict (first connection)'}`);
@@ -472,6 +640,9 @@ export class BotManager {
           hasConnectedBefore: true,
           lastActivity: new Date().toISOString()
         });
+        
+        // Setup keep-alive for this bot
+        this.setupBotKeepAlive(id, botData);
         
         this.emitBotUpdate(id);
       }
@@ -738,6 +909,7 @@ export class BotManager {
         qrCode: null,
         isRestoring: true,
         ownerId: config.ownerId, // Add missing ownerId field
+        hasConnectedBefore: !!config.hasConnectedBefore, // CRITICAL: Restore hasConnectedBefore flag
         // Initialize services
         conversationFlowService: new ConversationFlowService(new GroqService(), new LegalTriageService(), config.assistantName || 'Ana', this),
         groqService: new GroqService(),
@@ -758,8 +930,35 @@ export class BotManager {
         console.error(`❌ Error loading conversations for restored bot ${config.id}:`, error);
       }
       
-      // Try to restore the Baileys connection
-      await this.initializeBaileysBot(config.id, config.name, config.assistantName);
+      // Schedule delayed initialization to avoid session conflicts during system startup
+      const initDelay = Math.random() * 3000 + 2000; // Random delay between 2-5 seconds
+      console.log(`⏰ Scheduling bot ${config.id} initialization in ${Math.round(initDelay/1000)}s to avoid session conflicts`);
+      
+      setTimeout(async () => {
+        try {
+          // Wait for global lock to be released
+          while (this.globalInitLock) {
+            console.log(`⏳ Bot ${config.id} waiting for global initialization lock to be released...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          
+          // Acquire global lock
+          this.globalInitLock = true;
+          console.log(`� Bot ${config.id} acquired global initialization lock`);
+          
+          console.log(`�🔄 Starting delayed initialization for restored bot ${config.id}`);
+          await this.initializeBaileysBot(config.id, config.name, config.assistantName);
+          
+          // Release global lock
+          this.globalInitLock = false;
+          console.log(`🔓 Bot ${config.id} released global initialization lock`);
+          
+        } catch (error) {
+          console.error(`❌ Error in delayed initialization for bot ${config.id}:`, error);
+          // Always release lock on error
+          this.globalInitLock = false;
+        }
+      }, initDelay);
       
     } catch (error) {
       console.error(`❌ Error restoring bot ${config.id}:`, error);
@@ -785,6 +984,9 @@ export class BotManager {
         
         // Set manually stopped flag to prevent automatic reconnection
         bot.manuallyStopped = true;
+        
+        // Clear keep-alive timer
+        this.clearBotKeepAlive(botId);
         
         // Reset reconnection flags to prevent conflicts
         bot.isReconnecting = false;
@@ -828,6 +1030,9 @@ export class BotManager {
           console.error(`⚠️  Error deleting session files for bot ${botId}:`, error);
         }
       }
+      
+      // Clear keep-alive timer
+      this.clearBotKeepAlive(botId);
       
       this.bots.delete(botId);
       

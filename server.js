@@ -73,7 +73,7 @@ async function initializeApplication() {
     // Debug endpoints
     app.get('/api/debug/bots', (req, res) => {
       try {
-        const allBots = botManager.getAllBots();
+        const allBots = app.locals.botManager.getAllBots();
         console.log('Debug endpoint - All bots:', allBots);
         res.json({
           totalBots: allBots.length,
@@ -117,15 +117,16 @@ async function initializeApplication() {
 }
 
 // Initialize bot manager and user service (kept for backward compatibility)
-const botManager = new BotManager(io);
-const userService = new UserService();
+// Moved to initializeServices function to avoid duplication
+// const botManager = new BotManager(io);
+// const userService = new UserService();
 
 // Initialize default admin user (removed as it's now handled in initializeApplication)
 
 // Make botManager and userService available to routes first
 app.use((req, res, next) => {
-  req.botManager = botManager;
-  req.userService = userService;
+  req.botManager = app.locals.botManager;
+  req.userService = app.locals.userService;
   req.io = io;
   next();
 });
@@ -162,19 +163,19 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    bots: botManager.getBotsStatus()
+    bots: req.botManager ? req.botManager.getBotsStatus() : {}
   });
 });
 
 // Debug endpoint to check bot status (no auth required for debugging)
 app.get('/api/debug/bots', (req, res) => {
   try {
-    const botsStatus = botManager.getBotsStatus();
-    const allBots = botManager.getAllBots();
+    const botsStatus = req.botManager.getBotsStatus();
+    const allBots = req.botManager.getAllBots();
     
     res.json({
-      mapSize: botManager.bots.size,
-      mapKeys: Array.from(botManager.bots.keys()),
+      mapSize: req.botManager.bots.size,
+      mapKeys: Array.from(req.botManager.bots.keys()),
       botsStatus,
       allBots,
       databaseCount: DatabaseService.getAllBotsExtended().length
@@ -220,7 +221,7 @@ io.on('connection', (socket) => {
       console.log(`User ${user.email} authenticated and joined room ${user.id}`);
       
       // Send filtered bot status to authenticated user
-      let botStatus = botManager.getBotsStatus();
+      let botStatus = app.locals.botManager.getBotsStatus();
       
       console.log(`📊 Sending bot status to ${user.email}:`, JSON.stringify(botStatus, null, 2));
       
