@@ -486,15 +486,15 @@ export class ConversationFlowService {
                             messageText.length < 30;
     
     // If it doesn't look like a greeting and they have name/email, assume they're providing case details
-    if (!isLikelyGreeting && client.name && client.name.length > 3 && client.email && client.email.includes('@')) {
+    if (!isLikelyGreeting && client.name && client.name.length > 3 && this.hasValidEmailOrDeclined(client)) {
       console.log(`[DEBUG] handleGreeting - Message doesn't look like greeting and client has info, moving to case analysis`);
       conversation.state = 'ANALYZING_CASE';
       return await this.handleCaseAnalysis(conversation, messageText, client);
     }
     
     // Check if we already have name and email, skip to case analysis
-    if (client.name && client.name.length > 3 && client.email && client.email.includes('@')) {
-      console.log(`[DEBUG] handleGreeting - Client already has name and email, moving to case analysis`);
+    if (client.name && client.name.length > 3 && this.hasValidEmailOrDeclined(client)) {
+      console.log(`[DEBUG] handleGreeting - Client already has name and email/declined, moving to case analysis`);
       conversation.state = 'ANALYZING_CASE';
       
       const firstName = client.name.split(' ')[0];
@@ -502,7 +502,7 @@ export class ConversationFlowService {
       // AI generates natural greeting and transition to case discussion
       const greetingPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) está retornando.
 
-SITUAÇÃO: O cliente já forneceu nome e email anteriormente.
+SITUAÇÃO: O cliente já forneceu nome${client.email === 'DECLINED' ? ' e optou por não fornecer email' : ' e email'} anteriormente.
 
 TAREFA: Fazer uma saudação calorosa perguntando como vai e ir direto ao caso.
 
@@ -539,12 +539,13 @@ Responda APENAS com sua mensagem:`;
       
       const emailPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) está retornando.
 
-SITUAÇÃO: Você já conhece o nome da pessoa mas precisa do email.
+SITUAÇÃO: Você já conhece o nome da pessoa mas precisa do email (opcional).
 
 INSTRUÇÕES:
 - Cumprimente usando o primeiro nome (${firstName})
-- Peça o email de forma natural
-- Explique brevemente por que precisa (para atualizações)
+- Peça o email de forma natural mas mencione que é opcional
+- Explique que o email ajuda para atualizações do caso
+- Deixe claro que pode continuar sem email se preferir
 - Seja calorosa mas objetiva
 
 Responda APENAS com sua mensagem:`;
@@ -742,6 +743,44 @@ Responda APENAS com sua mensagem:`;
       console.log(`[DEBUG] handleEmailCollection - Detected case details in message, stored for later`);
     }
     
+    // Check if client indicates they don't have or don't want to provide email
+    if (this.detectEmailReluctance(messageText)) {
+      console.log(`[DEBUG] handleEmailCollection - Client indicates email reluctance, continuing without email`);
+      
+      // Mark client as explicitly not wanting to provide email
+      client.email = 'DECLINED';
+      this.clients.set(client.phone, client);
+      
+      // Clear email attempts counter
+      conversation.emailAttempts = 0;
+      
+      conversation.state = 'ANALYZING_CASE';
+      
+      // Check if we have early case details to use immediately
+      if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+        console.log(`[DEBUG] handleEmailCollection - Found early case details, processing directly`);
+        return await this.handleCaseAnalysis(conversation, conversation.earlyCaseDetails.join('\n'), client);
+      }
+      
+      // AI generates understanding response and transitions to case discussion
+      const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) indicou que não tem ou não quer fornecer email: "${messageText}"
+
+TAREFA: Demonstrar compreensão e fazer a transição natural para ouvir sobre o caso.
+
+INSTRUÇÕES:
+- Demonstre compreensão sobre a situação do email
+- Explique que pode continuar sem email
+- Convide a pessoa a contar sobre a situação jurídica
+- Seja empática e objetiva
+- Seja concisa mas clara
+- Não use emojis
+- Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
+
+Responda APENAS com sua mensagem:`;
+
+      return await this.groqService.generateResponse(transitionPrompt);
+    }
+    
     // If client already has an email and they're just providing it again or giving details, skip to case analysis
     if (client.email && client.email.includes('@')) {
       console.log(`[DEBUG] handleEmailCollection - Client already has email, moving to case analysis`);
@@ -778,6 +817,9 @@ Responda APENAS com sua mensagem:`;
       client.email = email;
       this.clients.set(client.phone, client);
       
+      // Clear email attempts counter on success
+      conversation.emailAttempts = 0;
+      
       conversation.state = 'ANALYZING_CASE';
       console.log(`[DEBUG] handleEmailCollection - Updated state to: "${conversation.state}"`);
       console.log(`[DEBUG] handleEmailCollection - Updated client email to: "${client.email}"`);
@@ -805,7 +847,54 @@ Responda APENAS com sua mensagem:`;
 
       return await this.groqService.generateResponse(transitionPrompt);
     } else {
-      console.log(`[DEBUG] handleEmailCollection - Email not valid, asking again`);
+      console.log(`[DEBUG] handleEmailCollection - Email not valid, checking for clarification request`);
+      
+      // Se chegou aqui, verifica se é uma segunda tentativa ou resposta a clarificação
+      // que também indica relutância (mesmo que de forma mais sutil)
+      const isSecondAttempt = conversation.emailAttempts && conversation.emailAttempts > 0;
+      
+      // Incrementa contador de tentativas
+      if (!conversation.emailAttempts) {
+        conversation.emailAttempts = 0;
+      }
+      conversation.emailAttempts++;
+      
+      // Se já tentou uma vez e ainda não tem email válido, assume que não quer fornecer
+      if (isSecondAttempt) {
+        console.log(`[DEBUG] handleEmailCollection - Second attempt without valid email, assuming reluctance`);
+        
+        // Mark client as explicitly not wanting to provide email
+        client.email = 'DECLINED';
+        this.clients.set(client.phone, client);
+        
+        conversation.state = 'ANALYZING_CASE';
+        
+        // Check if we have early case details to use immediately
+        if (conversation.earlyCaseDetails && conversation.earlyCaseDetails.length > 0) {
+          console.log(`[DEBUG] handleEmailCollection - Found early case details, processing directly`);
+          return await this.handleCaseAnalysis(conversation, conversation.earlyCaseDetails.join('\n'), client);
+        }
+        
+        // AI generates understanding response and transitions to case discussion
+        const transitionPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente (${client.name}) não forneceu um email válido após solicitação: "${messageText}"
+
+TAREFA: Demonstrar compreensão e fazer a transição natural para ouvir sobre o caso.
+
+INSTRUÇÕES:
+- Seja compreensiva sobre a situação do email
+- Explique que pode continuar sem email
+- Convide a pessoa a contar sobre a situação jurídica
+- Seja empática e objetiva
+- Seja concisa mas clara
+- Não use emojis
+- Encoraje detalhes (datas, pessoas envolvidas, valores, etc.)
+
+Responda APENAS com sua mensagem:`;
+
+        return await this.groqService.generateResponse(transitionPrompt);
+      }
+      
+      // Primeira tentativa - dá uma chance de clarificação
       // AI generates natural request for valid email
       const emailClarificationPrompt = `Você é ${this.assistantName}, assistente jurídica. O cliente respondeu "${messageText}" quando você pediu o email.
 
@@ -815,12 +904,12 @@ TAREFA: Se houver pergunta, responda brevemente e redirecione. Se não houver em
 
 INSTRUÇÕES:
 - Se há uma pergunta (como "pode ser qualquer um?"), responda de forma útil mas breve
-- Explique que precisa de um email válido para atualizações do caso
-- Redirecione gentilmente de volta ao pedido de email
+- Explique que o email é opcional para atualizações do caso
+- Mencione que se não tiver email, pode continuar sem
 - Seja objetiva mas empática
 - Máximo 2 frases
 
-EXEMPLO: Se perguntarem "pode ser qualquer um?", responda "Sim, pode ser seu email pessoal ou profissional. Qual email você gostaria de usar?"
+EXEMPLO: Se perguntarem "pode ser qualquer um?", responda "Sim, pode ser seu email pessoal ou profissional. Se não tiver email, podemos continuar sem. Qual prefere?"
 
 Responda APENAS com sua mensagem:`;
 
@@ -1501,6 +1590,58 @@ Responda APENAS com sua mensagem:`;
     const emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
     const match = text.match(emailPattern);
     return match ? match[0] : null;
+  }
+
+  // Detecta se o cliente indica que não tem ou não quer fornecer email
+  detectEmailReluctance(text) {
+    const lowerText = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    
+    const reluctancePatterns = [
+      // Não tem email
+      /nao\s+tenho\s+(email|e-mail)/,
+      /nao\s+possuo\s+(email|e-mail)/,
+      /nao\s+tem\s+(email|e-mail)/,
+      /sem\s+(email|e-mail)/,
+      /nao\s+uso\s+(email|e-mail)/,
+      
+      // Não quer fornecer
+      /nao\s+quero\s+(dar|fornecer|passar)\s+(email|e-mail)/,
+      /nao\s+gosto\s+de\s+(dar|fornecer|passar)\s+(email|e-mail)/,
+      /prefiro\s+nao\s+(dar|fornecer|passar)\s+(email|e-mail)/,
+      /nao\s+quero\s+(email|e-mail)/,
+      
+      // Questionamentos sobre necessidade
+      /precisa\s+mesmo\s+do\s+(email|e-mail)/,
+      /e\s+obrigatorio\s+o\s+(email|e-mail)/,
+      /(email|e-mail)\s+e\s+obrigatorio/,
+      /posso\s+continuar\s+sem\s+(email|e-mail)/,
+      /da\s+pra\s+continuar\s+sem\s+(email|e-mail)/,
+      
+      // Respostas evasivas comuns
+      /depois\s+eu\s+(dou|passo|falo)\s+(o\s+)?(email|e-mail)/,
+      /mais\s+tarde\s+(dou|passo|falo)\s+(o\s+)?(email|e-mail)/,
+      /vou\s+pensar\s+(no\s+)?(email|e-mail)/,
+      
+      // Não quero usar/criar
+      /nao\s+tenho\s+acesso\s+ao\s+(email|e-mail)/,
+      /esqueci\s+meu\s+(email|e-mail)/,
+      /nao\s+lembro\s+meu\s+(email|e-mail)/,
+      /nao\s+uso\s+mais\s+(email|e-mail)/,
+      
+      // Frases diretas de recusa
+      /pode\s+ser\s+sem\s+(email|e-mail)/,
+      /vamos\s+sem\s+(email|e-mail)/,
+      /continua\s+sem\s+(email|e-mail)/,
+      /pula\s+(o\s+)?(email|e-mail)/,
+      /sem\s+necessidade\s+de\s+(email|e-mail)/
+    ];
+    
+    return reluctancePatterns.some(pattern => pattern.test(lowerText));
+  }
+
+  // Verifica se o cliente tem email válido ou optou por não fornecer
+  hasValidEmailOrDeclined(client) {
+    return client.email && (client.email.includes('@') || client.email === 'DECLINED');
   }
 
   getAllConversationText(conversation) {
